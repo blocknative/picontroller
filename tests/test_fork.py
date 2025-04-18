@@ -124,7 +124,6 @@ class TestFork:
 
         # update 
         tx = controller_sepolia.update_oracles(payload_multi, 2, sender=owner, raise_on_revert=True)
-        #print(tx.show_trace(False))
 
         events = list(tx.decode_logs())
         e_1 = events[0]
@@ -154,6 +153,58 @@ class TestFork:
 
         events = list(tx.decode_logs())
         # everything was a duplicate so no rewards
+        assert len(events) == 0
+
+    def test_multi_receipt(self, owner, store, oracle_sepolia, controller_sepolia, chain):
+
+        w3 = Web3(HTTPProvider(GASNET_RPC))
+
+        with open('tests/gasnet_oracle_v2.json') as f:
+            abi = json.load(f)['abi']
+
+        oracle_gasnet = w3.eth.contract(address=GASNET_ORACLE, abi=abi)
+
+        sid = 2
+        cid_1 = 42161
+        cid_2 = 10
+        basefee_typ = 107
+        tip_typ = 322
+
+        # read gasnet
+        payload_1: bytes = oracle_gasnet.functions.getValues(sid, cid_1).call()
+        payload_2: bytes = oracle_gasnet.functions.getValues(sid, cid_2).call()
+        b = b'0000000000000000000000000000000'
+        payload_multi = payload_1 + b + payload_2
+
+        tx = controller_sepolia.update_many(payload_multi, raise_on_revert=True, sender=owner)
+        tx.show_trace(True)
+
+        events = list(tx.decode_logs())
+        assert len(events) == 2
+        assert events[0].chain_id == cid_1
+        assert events[1].chain_id == cid_2
+
+        chain.mine(1, timestamp=chain.pending_timestamp+12)
+
+        # get current oracle values
+        current_basefee_value_1, current_height_1, current_ts_1 = oracle_sepolia.get(sid, cid_1, basefee_typ)
+        current_tip_value_1, current_height_1, current_ts_1 = oracle_sepolia.get(sid, cid_1, tip_typ)
+        print(f"{current_basefee_value_1=}")
+        print(f"{current_tip_value_1=}")
+        print(f"{current_ts_1=}")
+        print(f"{current_height_1=}")
+        current_basefee_value_2, current_height_2, current_ts_2 = oracle_sepolia.get(sid, cid_2, basefee_typ)
+        current_tip_value_2, current_height_2, current_ts_2 = oracle_sepolia.get(sid, cid_2, tip_typ)
+        print(f"{current_basefee_value_2=}")
+        print(f"{current_tip_value_2=}")
+        print(f"{current_ts_2=}")
+        print(f"{current_height_2=}")
+
+        # update w same payload
+        tx = controller_sepolia.update_many(payload_multi, sender=owner, raise_on_revert=True)
+        #print(tx.show_trace(False))
+
+        events = list(tx.decode_logs())
         assert len(events) == 0
 
     def test_ts(self, owner, store, oracle_sepolia, controller_sepolia, chain):

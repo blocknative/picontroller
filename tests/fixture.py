@@ -3,14 +3,13 @@ from ape import accounts, Contract
 import params
 
 from addresses import oracle_addresses
-from abis import gas_oracle_v2_abi
+from abis import gas_oracle_v3_abi
 
 SEPOLIA_ORACLE = oracle_addresses[11155111]
 
 @pytest.fixture
 def oracle(owner, project):
     oracle = owner.deploy(project.oracle, sender=owner)
-    #oracle.set_value(1, 1000*10**18, 200, sender=owner)
     return oracle
 
 @pytest.fixture
@@ -20,7 +19,7 @@ def store(owner, project):
 
 @pytest.fixture
 def oracle_sepolia(owner, project):
-    contract = Contract(SEPOLIA_ORACLE, abi=gas_oracle_v2_abi)
+    contract = Contract(SEPOLIA_ORACLE, abi=gas_oracle_v3_abi)
     return contract
 
 @pytest.fixture

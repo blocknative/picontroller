@@ -14,10 +14,8 @@ from scripts import params
 from scripts.oracles import oracle_addresses
 
 SEPOLIA_ORACLE = oracle_addresses[11155111]#'0xCc936bE977BeDb5140C5584d8B6043C9068622A6'
-REWARDS = '0x812cb53503f7232574cb6900ccbd58dd551f3300'
+REWARDS = '0xd1aC001f243E61682167D1177fAd4182C956E493'
 controller = project.RewardController.at(REWARDS)
-
-oracle_sepolia = Contract(SEPOLIA_ORACLE, abi=gas_oracle_v2_abi)
 
 # Gasnet
 w3 = Web3(HTTPProvider('https://rpc.gas.network'))
@@ -41,14 +39,15 @@ tip_typ = params.tip_reward_type
 # read gasnet
 dat_1: bytes = oracle_gasnet.functions.getValues(sid, cid_1).call()
 dat_2: bytes = oracle_gasnet.functions.getValues(sid, cid_2).call()
-dat = dat_1 + dat_2
+d = b'0000000000000000000000000000000'
+dat = dat_1 + d + dat_2
 
-rewards = controller.update_oracles.call(dat, 2)
+rewards = controller.update_many.call(dat)
 print("pending rewards")
 print(rewards)
 
 # update oracle w/ gasnet payload
-tx = controller.update_oracles(dat, 2, sender=account, raise_on_revert=True, gas=3000000)
+tx = controller.update_many(dat, sender=account, raise_on_revert=True, gas=3000000)
 tx.show_trace(True)
 
 print(tx.events)
