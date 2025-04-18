@@ -3,13 +3,13 @@
 
 interface IOracle:
     def get(systemid: uint8, cid: uint64, typ: uint16) -> (uint256, uint64, uint48): view
-    #def storeValues(dat: DynArray[uint8, 256]): nonpayable
     def storeValues(dat: Bytes[16384]): nonpayable
+    def storeValuesWithReceipt(dat: Bytes[16384]) -> DynArray[RecordReceipt, MAX_PAYLOADS]: nonpayable
 
 event OracleUpdated:
     updater: address
     chain_id: uint64
-    new_value: uint256
+    new_value: uint240
     deviation: uint256
     time_since: uint256
     time_reward: uint256
@@ -35,12 +35,19 @@ struct Reward:
     time_reward: uint256
     deviation_reward: uint256
 
+struct EnhancedReward:
+    chain_id: uint64
+    height: uint64
+    gas_price: uint240
+    time_reward: uint256
+    deviation_reward: uint256
+
 struct TotalRewards:
     updater: address
     total_rewards: uint256
 
 BASEFEE_REWARD_TYPE: public(constant(uint16)) = 107
-MAX_PAYLOADS: public(constant(uint16)) = 64
+MAX_PAYLOADS: public(constant(uint256)) = 32
 MAX_UPDATERS: public(constant(uint32)) = 2**16
 MAX_PAYLOAD_SIZE: public(constant(uint256)) = 16384
 
@@ -67,12 +74,8 @@ n_updaters:  public(uint32)
 frozen: public(bool)
 oracle: public(IOracle)
 
-#error_integral: public(int256)
 error_integral: public(HashMap[uint64, int256])
 last_output: public(HashMap[uint64, int256])
-#last_p_output: public(HashMap[uint64, int256])
-#last_i_output: public(HashMap[uint64, int256])
-#last_update_time: public(HashMap[uint64, uint256])
 
 rewards: public(HashMap[address, uint256])
 total_rewards: public(uint256)
@@ -83,7 +86,6 @@ index: HashMap[uint64, uint256]  # Pointer to next insert position (0 to N-1)
 count: HashMap[uint64, uint256]  # Number of elements inserted so far, up to N
 rolling_sum: HashMap[uint64, uint256]  # Sum of last N values for efficient averaging
 
-#coeff: public(int96[4])
 coeff: public(Coefficients)
 intercept: public(int256)
 
@@ -260,7 +262,6 @@ def _decode(dat: Bytes[MAX_PAYLOAD_SIZE], tip_typ: uint16) -> (uint8, uint64, ui
 
     return sid, cid, basefee_val, tip_val, ts, h
 
-
 @internal
 @view
 def _riemann_sum(x: int256, y: int256)-> int256:
@@ -397,130 +398,120 @@ def get_updaters_chunk(start: uint256, count: uint256) -> (address[256], uint256
 
     return result_updaters, result_rewards
 
+struct RecordReceipt:
+    systemid: uint8
+    cid: uint64
+    typ: uint16
+    old_height: uint64
+    old_timestamp: uint48
+    old_value: uint240
+    new_height: uint64
+    new_timestamp: uint48
+    new_value: uint240
+
 @external
-def update_oracles(dat_many: Bytes[MAX_PAYLOAD_SIZE], n: uint256)-> Reward[MAX_PAYLOADS]:
-    return self._update_oracles(dat_many, n)
+def update_many(dat: Bytes[MAX_PAYLOAD_SIZE])-> EnhancedReward[MAX_PAYLOADS]:
+    receipts: DynArray[RecordReceipt, MAX_PAYLOADS] = extcall self.oracle.storeValuesWithReceipt(dat)
+    rewards: EnhancedReward[MAX_PAYLOADS] = empty(EnhancedReward[MAX_PAYLOADS])
+    cid: uint64 = 0
+    typ: uint16 = 0
+    rec: RecordReceipt = empty(RecordReceipt)
+    old_tip_val: uint240 = 0
+    old_bf_val: uint240 = 0
+    new_tip_val: uint240 = 0
+    new_bf_val: uint240 = 0
 
-@internal
-def _update_oracles(dat_many: Bytes[MAX_PAYLOAD_SIZE], n: uint256)-> Reward[MAX_PAYLOADS]:
-    assert not self.frozen, "rewards contract is frozen"
-    self._add_updater(msg.sender) 
-    offset: uint256 = 0
-    plen: uint16 = 0
+    bf_found: bool = False
+    tip_found: bool = False
 
-    time_reward: uint256 = 0
-    deviation_reward: uint256 = 0
+    current_gasprice: uint240 = 0
+    new_gasprice: uint240 = 0
+    deviation: uint256 = 0
+    time_since: uint256 = 0
+    time_reward: int256 = 0
+    deviation_reward: int256 = 0
+    reward_mult: int256 = 0
+    time_reward_adj: int256 = 0
+    deviation_reward_adj: int256 = 0
+    time_reward_adj_u: uint256 = 0
+    deviation_reward_adj_u: uint256 = 0
 
-    rewards: Reward[MAX_PAYLOADS] = empty(Reward[MAX_PAYLOADS])
+    # self.tip_reward_type
+    # BASEFEE_REWARD_TYPE
+    idx: uint256 = 0
+    for i: uint256 in range(len(receipts), bound=MAX_PAYLOADS):
+        rec = receipts[i]
 
-    dat_p: Bytes[MAX_PAYLOAD_SIZE] = b""
-    l: uint256 = len(dat_many)
+        if rec.typ == self.tip_reward_type:
+            old_tip_val = rec.old_value
+            new_tip_val = rec.new_value
+            tip_found = True
+        elif rec.typ == BASEFEE_REWARD_TYPE:
+            old_bf_val = rec.old_value
+            new_bf_val = rec.new_value
+            bf_found = True
 
-    for i: uint256 in range(n, bound=16):
-        dat_p = slice(dat_many, offset, l-offset)
-        plen = self._decode_plen(dat_p)
-        if plen == 0:
-            assert i == n - 1, "plen is zero before n is reached"
-            break
+        # tip and bf found for this cid, time to process
+        if not (tip_found and bf_found):
+            continue
 
-        payload_size: uint256 = 32 + convert(plen, uint256)*32 + 65
-        time_reward, deviation_reward = self._update_oracle(dat_p, payload_size)
-        #time_reward, deviation_reward = self._update_oracle(slice(dat_p, offset, offset + payload_size), payload_size)
-        rewards[i] = Reward(time_reward=time_reward, deviation_reward=deviation_reward)
+        # reset these
+        tip_found = False
+        bf_found = False
 
-        # add full payload size
-        offset += 32 + convert(plen, uint256)*32 + 65
+        current_gasprice = old_tip_val + old_bf_val
+      
+        # no update
+        if rec.old_timestamp == rec.new_timestamp:
+            rewards[idx] = EnhancedReward(chain_id=rec.cid,
+                                        height=rec.old_height,
+                                        gas_price=current_gasprice,
+                                        time_reward=0,
+                                        deviation_reward=0)
+            continue
+
+        new_gasprice = new_tip_val + new_bf_val
+
+        # calculate deviation and staleness(time_since) for new values
+        deviation = self._calc_deviation(rec.cid, convert(new_gasprice, uint256), convert(current_gasprice, uint256))
+
+        time_since = convert(rec.new_timestamp - rec.old_timestamp, uint256) * EIGHTEEN_DECIMAL_NUMBER_U
+
+        # calculate reward
+        time_reward, deviation_reward = self._calc_reward(convert(time_since, int256)//1000, convert(deviation, int256))
+     
+        # calculate reward multiplier
+        reward_mult = self._calc_reward_mult(rec.cid, time_since//1000)
+
+        # adjust rewards with multiplier
+        time_reward_adj = reward_mult * time_reward // EIGHTEEN_DECIMAL_NUMBER
+        deviation_reward_adj = reward_mult * deviation_reward // EIGHTEEN_DECIMAL_NUMBER
+
+        time_reward_adj_u = convert(time_reward_adj, uint256)
+        deviation_reward_adj_u = convert(deviation_reward_adj, uint256)
+
+        # store rewards
+        self.rewards[msg.sender] += time_reward_adj_u + deviation_reward_adj_u
+        self.total_rewards += time_reward_adj_u + deviation_reward_adj_u
+
+        log OracleUpdated(updater=msg.sender, chain_id=rec.cid, new_value=new_gasprice,
+                          deviation=deviation, time_since=time_since,
+                          time_reward=time_reward_adj_u, deviation_reward=deviation_reward_adj_u,
+                          reward_mult=reward_mult)
+
+        rewards[idx] = EnhancedReward(chain_id=rec.cid,
+                                    height=rec.old_height,
+                                    gas_price=current_gasprice,
+                                    time_reward=time_reward_adj_u,
+                                    deviation_reward=deviation_reward_adj_u)
+        idx += 1
 
     return rewards
-
-@external
-def update_oracle(dat: Bytes[MAX_PAYLOAD_SIZE])-> Reward:
-    assert not self.frozen, "rewards contract is frozen"
-    self._add_updater(msg.sender) 
-    return self._update_oracles(dat, 1)[0]
-
-@internal
-def copy_bytes_to_dynarray(src: Bytes[MAX_PAYLOAD_SIZE], start: uint256, length: uint256) -> DynArray[uint8, MAX_PAYLOAD_SIZE]:
-    assert start + length <= len(src), "out of bounds"
-
-    result: DynArray[uint8, MAX_PAYLOAD_SIZE] = []
-    for i: uint256 in range(length, bound=MAX_PAYLOAD_SIZE):
-        b: uint8 = convert(slice(src, start + i, 1), uint8)
-        result.append(b)
-
-    return result
 
 @internal
 def _update_oracle_stub(dat: Bytes[MAX_PAYLOAD_SIZE], l: uint256)-> (uint256, uint256):
     tip_typ: uint16 = self.tip_reward_type
     return 0, 0
-
-@internal
-def _update_oracle(dat: Bytes[MAX_PAYLOAD_SIZE], l: uint256)-> (uint256, uint256):
-    tip_typ: uint16 = self.tip_reward_type
-    sid: uint8 = 0
-    cid: uint64 = 0
-    typ: uint16 = 0
-    new_basefee_value: uint240 = 0
-    new_tip_value: uint240 = 0
-    new_ts: uint48 = 0
-    new_height: uint64 = 0
-
-    # decode data and get new values 
-    sid, cid, new_basefee_value, new_tip_value, new_ts, new_height = self._decode(dat, tip_typ)
-
-    new_tip_value_u: uint256 = convert(new_tip_value, uint256)
-    new_basefee_value_u: uint256 = convert(new_basefee_value, uint256)
-    new_gasprice_value: uint256 = new_basefee_value_u + new_tip_value_u
-
-    current_gasprice_value: uint256 = 0
-    current_basefee_value: uint256 = 0
-    current_tip_value: uint256 = 0
-    current_height: uint64 = 0
-    current_ts: uint48 = 0
-
-    # current oracle values
-    (current_basefee_value, current_height, current_ts) = staticcall self.oracle.get(sid, cid, BASEFEE_REWARD_TYPE)
-    (current_tip_value, current_height, current_ts) = staticcall self.oracle.get(sid, cid, tip_typ)
-    current_gasprice_value = current_basefee_value + current_tip_value
-
-    if not (new_height > current_height or (new_height == current_height and new_ts > current_ts)): 
-        return 0, 0
-
-    # calculate deviation and staleness(time_since) for new values
-    deviation: uint256 = self._calc_deviation(cid, new_gasprice_value, current_gasprice_value)
-    time_since: uint256 = convert(new_ts - current_ts, uint256) * EIGHTEEN_DECIMAL_NUMBER_U
-
-    # calculate reward
-    time_reward: int256 = 0
-    deviation_reward: int256 = 0
-    time_reward, deviation_reward = self._calc_reward(convert(time_since, int256)//1000, convert(deviation, int256))
- 
-    # calculate reward multiplier
-    reward_mult: int256 = self._calc_reward_mult(cid, time_since//1000)
-
-    # adjust rewards with multiplier
-    time_reward_adj: int256 = reward_mult * time_reward // EIGHTEEN_DECIMAL_NUMBER
-    deviation_reward_adj: int256 = reward_mult * deviation_reward // EIGHTEEN_DECIMAL_NUMBER
-
-    time_reward_adj_u: uint256 = convert(time_reward_adj, uint256)
-    deviation_reward_adj_u: uint256 = convert(deviation_reward_adj, uint256)
-
-    # store rewards
-    self.rewards[msg.sender] += time_reward_adj_u + deviation_reward_adj_u
-    self.total_rewards += time_reward_adj_u + deviation_reward_adj_u
-
-    log OracleUpdated(updater=msg.sender, chain_id=cid, new_value=new_gasprice_value,
-                      deviation=deviation, time_since=time_since,
-                      time_reward=time_reward_adj_u, deviation_reward=deviation_reward_adj_u,
-                      reward_mult=reward_mult)
-
-    # send new values to oracle
-    #extcall self.oracle.storeValues(dat)
-    extcall self.oracle.storeValues(slice(dat, 0, l))
-    #extcall self.oracle.storeValues(self.copy_bytes_to_dynarray(dat, 0, l))
-
-    return time_reward_adj_u, deviation_reward_adj_u
 
 @external
 @view
@@ -574,10 +565,6 @@ def _get_window_size(chain_id: uint64) -> uint256:
     if value == 0:
         return self.default_window_size
     return value
-
-#@external
-#def add_value(chain_id: uint64, new_value: uint256, count: uint256, window_size: uint256):
-#    self._add_value(chain_id, new_value, count, window_size)
 
 @internal
 def _add_value(chain_id: uint64, new_value: uint256, count: uint256, window_size: uint256):
@@ -666,21 +653,11 @@ def _update(cid: uint64, error: int256) -> (int256, int256, int256):
 
     bounded_pi_output: int256 = self._bound_pi_output(pi_output)
 
-    #self.error_integral[cid] = self._clamp_error_integral(cid, bounded_pi_output, new_error_integral, new_area)
     self.error_integral[cid] = self._clamp_error_integral(bounded_pi_output, error_integral, new_error_integral, error)
 
-    # could maybe remove these to save gas
-    #self.last_update_time[cid] = block.timestamp
     self.last_output[cid] = bounded_pi_output
-    #self.last_p_output[cid] = p_output
-    #self.last_i_output[cid] = i_output
 
     return (bounded_pi_output, p_output, i_output)
-
-#@external
-#@view
-#def last_update(cid: uint64) -> (uint256, int256, int256, int256):
-#    return (self.last_update_time[cid], self.last_output[cid], self.last_p_output[cid], self.last_i_output[cid])
 
 @external
 @view
@@ -702,8 +679,3 @@ def _get_new_pi_output(cid:  uint64, error: int256) -> (int256, int256, int256):
     bounded_pi_output: int256 = self._bound_pi_output(pi_output)
 
     return (bounded_pi_output, p_output, i_output)
-
-#@external
-#@view
-#def elapsed(cid: uint64) -> uint256:
-#    return block.timestamp - self.last_update_time[cid]
