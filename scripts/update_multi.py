@@ -14,7 +14,7 @@ from scripts import params
 from scripts.oracles import oracle_addresses
 
 SEPOLIA_ORACLE = oracle_addresses[11155111]#'0xCc936bE977BeDb5140C5584d8B6043C9068622A6'
-REWARDS = '0xd1aC001f243E61682167D1177fAd4182C956E493'
+REWARDS = '0xaFad46DE6A22C968cF2EDa42b19E38cd9beb304f'
 controller = project.RewardController.at(REWARDS)
 
 # Gasnet

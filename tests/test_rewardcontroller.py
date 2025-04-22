@@ -686,9 +686,10 @@ class TestRewardController:
         #assert output != 0
         #assert output != 10**18
 
-    def _test_get_updaters_chunk(self, controller, oracle, chain):
+    def test_get_updaters_chunk(self, controller, oracle, chain):
         # NOTE: needs --network ethereum:local:foundry
 
+        delimiter = b'0000000000000000000000000000000'
         n_updaters = 10
         #n_updaters = len(accounts.test_accounts)
         for i in range(n_updaters):
@@ -712,9 +713,10 @@ class TestRewardController:
                 }
 
             a = utils.create_payload(**payload_params)
+            a+= delimiter
 
             with accounts.use_sender(updater):
-                tx = controller.update_oracle(a)
+                tx = controller.update_many(a)
 
             assert controller.n_updaters() == i + 1
             print(f"{tx.gas_used=}")
@@ -780,7 +782,7 @@ class TestRewardController:
             a = utils.create_payload(**payload_params)
             tx = controller.update_oracle(a, sender=owner)
 
-    def test_update_oracles_multi(self, owner, controller, oracle, chain):
+    def test_update_many_multi(self, owner, controller, oracle, chain):
         n = 2
         scales = [(i+1, (i+1)*10**18) for i in range(n)]
         controller.set_scales(scales, sender=owner)
@@ -796,6 +798,7 @@ class TestRewardController:
 
         # build multi-chain payload
         payload = b''
+        delimiter = b'0000000000000000000000000000000'
         for i in range(n):
             typ_values = {107: random.randint(10**15, 10**18), 199: random.randint(10**15, 10**18), 322: random.randint(10**15, 10**18)}
             ts = int(time.time() * 1000)
@@ -813,11 +816,14 @@ class TestRewardController:
             # payload + signature
             new_payload = utils.create_payload(**payload_params)
             print(f"{len(new_payload)=}")
+            if i != 0:
+                payload += delimiter
             payload += new_payload
 
         print(f"{len(payload)=}")
         #return
-        #rewards = controller.update_oracles.call(payload, n)
+        rewards = controller.update_many.call(payload)
+
         #print(f"{rewards=}")
 
         """
@@ -830,7 +836,7 @@ class TestRewardController:
             
         """
 
-        tx = controller.update_oracles(payload, n, raise_on_revert=True, sender=owner)
+        tx = controller.update_many(payload, raise_on_revert=True, sender=owner)
         #tx = controller.update_oracle(payload, raise_on_revert=True, sender=owner)
         tx.show_trace(True)
         assert len(tx.events) == n
@@ -851,7 +857,7 @@ class TestRewardController:
             print(e.event_arguments)
             print(f"{e.block_number=}")
 
-        tx = controller.update_oracles(payload, n, sender=owner)
+        tx = controller.update_many(payload, sender=owner)
         # no update
         assert len(tx.events) == 0
 
