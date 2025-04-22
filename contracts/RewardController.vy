@@ -436,6 +436,8 @@ def update_many(dat: Bytes[MAX_PAYLOAD_SIZE])-> EnhancedReward[MAX_PAYLOADS]:
     time_reward_adj_u: uint256 = 0
     deviation_reward_adj_u: uint256 = 0
 
+    self._add_updater(msg.sender)
+
     # self.tip_reward_type
     # BASEFEE_REWARD_TYPE
     idx: uint256 = 0
