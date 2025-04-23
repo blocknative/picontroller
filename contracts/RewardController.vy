@@ -20,6 +20,7 @@ struct RecordReceipt:
 
 event OracleUpdated:
     updater: address
+    system_id: uint8
     chain_id: uint64
     new_value: uint240
     deviation: uint256
@@ -48,6 +49,7 @@ struct Reward:
     deviation_reward: uint256
 
 struct EnhancedReward:
+    system_id: uint8
     chain_id: uint64
     height: uint64
     gas_price: uint240
@@ -59,7 +61,7 @@ struct TotalRewards:
     total_rewards: uint256
 
 BASEFEE_REWARD_TYPE: public(constant(uint16)) = 107
-MAX_PAYLOADS: public(constant(uint256)) = 32
+MAX_PAYLOADS: public(constant(uint256)) = 16
 MAX_UPDATERS: public(constant(uint32)) = 2**16
 MAX_PAYLOAD_SIZE: public(constant(uint256)) = 16384
 EMA_ALPHA: public(constant(uint256)) = 818181818181818176 # 1 - 2/11
@@ -399,7 +401,7 @@ def _add_updater(updater: address):
 
 @external
 @view
-def get_updaters_chunk(start: uint256, count: uint256) -> (address[256], uint256[256]):
+def get_updaters_chunk_old(start: uint256, count: uint256) -> (address[256], uint256[256]):
     assert count <= 256
     result_updaters: address[256] = empty(address[256])
     result_rewards: uint256[256] = empty(uint256[256])
@@ -414,7 +416,7 @@ def get_updaters_chunk(start: uint256, count: uint256) -> (address[256], uint256
 
 @external
 @view
-def get_updaters_chunk_new(start: uint256, count: uint256) -> DynArray[TotalRewards, 256]:
+def get_updaters_chunk(start: uint256, count: uint256) -> DynArray[TotalRewards, 256]:
     assert count <= 256
     #result_updaters: address[256] = empty(address[256])
     #result_rewards: uint256[256] = empty(uint256[256])
@@ -433,11 +435,13 @@ def get_updaters_chunk_new(start: uint256, count: uint256) -> DynArray[TotalRewa
     return total_rewards
 
 @external
-def update_many(dat: Bytes[MAX_PAYLOAD_SIZE]) -> EnhancedReward[MAX_PAYLOADS]:
+#def update_many(dat: Bytes[MAX_PAYLOAD_SIZE]) -> EnhancedReward[MAX_PAYLOADS]:
+def update_many(dat: Bytes[MAX_PAYLOAD_SIZE]) -> DynArray[EnhancedReward, MAX_PAYLOADS]:
     assert not self.frozen, "Rewards contract is frozen"
 
     receipts: DynArray[RecordReceipt, MAX_PAYLOADS] = extcall self.oracle.storeValuesWithReceipt(dat)
-    rewards: EnhancedReward[MAX_PAYLOADS] = empty(EnhancedReward[MAX_PAYLOADS])
+    #rewards: EnhancedReward[MAX_PAYLOADS] = empty(EnhancedReward[MAX_PAYLOADS])
+    rewards: DynArray[EnhancedReward, MAX_PAYLOADS] = []
     cid: uint64 = 0
     typ: uint16 = 0
     rec: RecordReceipt = empty(RecordReceipt)
@@ -449,7 +453,7 @@ def update_many(dat: Bytes[MAX_PAYLOAD_SIZE]) -> EnhancedReward[MAX_PAYLOADS]:
     bf_found: bool = False
     tip_found: bool = False
 
-    current_gasprice: uint240 = 0
+    old_gasprice: uint240 = 0
     new_gasprice: uint240 = 0
     deviation: uint256 = 0
     time_since: uint256 = 0
@@ -463,8 +467,6 @@ def update_many(dat: Bytes[MAX_PAYLOAD_SIZE]) -> EnhancedReward[MAX_PAYLOADS]:
 
     self._add_updater(msg.sender)
 
-    # self.tip_reward_type
-    # BASEFEE_REWARD_TYPE
     idx: uint256 = 0
     for i: uint256 in range(len(receipts), bound=MAX_PAYLOADS):
         rec = receipts[i]
@@ -477,6 +479,8 @@ def update_many(dat: Bytes[MAX_PAYLOAD_SIZE]) -> EnhancedReward[MAX_PAYLOADS]:
             old_bf_val = rec.old_value
             new_bf_val = rec.new_value
             bf_found = True
+        else:
+            continue
 
         # tip and bf found for this cid, time to process
         if not (tip_found and bf_found):
@@ -486,21 +490,23 @@ def update_many(dat: Bytes[MAX_PAYLOAD_SIZE]) -> EnhancedReward[MAX_PAYLOADS]:
         tip_found = False
         bf_found = False
 
-        current_gasprice = old_tip_val + old_bf_val
+        old_gasprice = old_tip_val + old_bf_val
       
-        # no update
-        if (rec.old_height == rec.new_height and rec.old_height == 0):
-            rewards[idx] = EnhancedReward(chain_id=rec.cid,
-                                        height=rec.old_height,
-                                        gas_price=current_gasprice,
-                                        time_reward=0,
-                                        deviation_reward=0)
+        # type was not updated, so no reward
+        if (rec.new_height == 0):
+            rewards.append(EnhancedReward(system_id=rec.systemid,
+                                          chain_id=rec.cid,
+                                          height=rec.old_height,
+                                          gas_price=old_gasprice,
+                                          time_reward=0,
+                                          deviation_reward=0))
+            #idx += 1
             continue
 
         new_gasprice = new_tip_val + new_bf_val
 
         # calculate deviation and staleness(time_since) for new values
-        deviation = self._calc_deviation(rec.cid, convert(new_gasprice, uint256), convert(current_gasprice, uint256))
+        deviation = self._calc_deviation(rec.cid, convert(new_gasprice, uint256), convert(old_gasprice, uint256))
 
         time_since = convert(rec.new_timestamp - rec.old_timestamp, uint256) * EIGHTEEN_DECIMAL_NUMBER_U
 
@@ -523,17 +529,18 @@ def update_many(dat: Bytes[MAX_PAYLOAD_SIZE]) -> EnhancedReward[MAX_PAYLOADS]:
         self.rewards[msg.sender] += time_reward_adj_u + deviation_reward_adj_u
         self.total_rewards += time_reward_adj_u + deviation_reward_adj_u
 
-        log OracleUpdated(updater=msg.sender, chain_id=rec.cid, new_value=new_gasprice,
-                          deviation=deviation, time_since=time_since,
+        log OracleUpdated(updater=msg.sender, system_id=rec.systemid, chain_id=rec.cid,
+                          new_value=new_gasprice, deviation=deviation, time_since=time_since,
                           time_reward=time_reward_adj_u, deviation_reward=deviation_reward_adj_u,
                           reward_mult=reward_mult)
 
-        rewards[idx] = EnhancedReward(chain_id=rec.cid,
-                                    height=rec.old_height,
-                                    gas_price=current_gasprice,
-                                    time_reward=time_reward_adj_u,
-                                    deviation_reward=deviation_reward_adj_u)
-        idx += 1
+        rewards.append(EnhancedReward(system_id=rec.systemid,
+                                      chain_id=rec.cid,
+                                      height=rec.old_height,
+                                      gas_price=old_gasprice,
+                                      time_reward=time_reward_adj_u,
+                                      deviation_reward=deviation_reward_adj_u))
+        #idx += 1
 
     return rewards
 
@@ -577,33 +584,33 @@ def _calc_deviation_reward(deviation: int256, coeff: Coefficients) -> int256:
 def _calc_reward(time_since: int256, deviation: int256, coeff: Coefficients) -> (int256, int256):
     return self._calc_time_reward(time_since, coeff), self._calc_deviation_reward(deviation, coeff)
 
-@external
-def test_add_value(chain_id: uint64, new_value: uint256):
-    count: uint256 = self.count[chain_id]
-    window_size: uint256 = self.window_size
-    self._add_value(chain_id, new_value, count, window_size)
+#@external
+#def test_add_value(chain_id: uint64, new_value: uint256):
+#    count: uint256 = self.count[chain_id]
+#    window_size: uint256 = self.window_size
+#    self._add_value(chain_id, new_value, count, window_size)
 
-@internal
-def _add_value(chain_id: uint64, new_value: uint256, count: uint256, window_size: uint256):
+#@internal
+#def _add_value(chain_id: uint64, new_value: uint256, count: uint256, window_size: uint256):
     #Add a new value to the circular buffer and update rolling sum.
 
-    old_value: uint256 = 0
+#    old_value: uint256 = 0
 
-    if count < window_size:
+#    if count < window_size:
         # Buffer not full yet
-        self.count[chain_id] += 1
-    else:
+#        self.count[chain_id] += 1
+#    else:
         # Buffer full: value at index will be overwritten
-        old_value = self.oracle_values[chain_id][self.index[chain_id]]
+#        old_value = self.oracle_values[chain_id][self.index[chain_id]]
 
     # Update rolling sum
-    self.rolling_sum[chain_id] = self.rolling_sum[chain_id] + new_value - old_value
+#    self.rolling_sum[chain_id] = self.rolling_sum[chain_id] + new_value - old_value
 
     # Store new value in buffer
-    self.oracle_values[chain_id][self.index[chain_id]] = new_value
+#    self.oracle_values[chain_id][self.index[chain_id]] = new_value
 
     # Update index (circular increment)
-    self.index[chain_id] = (self.index[chain_id] + 1) % window_size
+#    self.index[chain_id] = (self.index[chain_id] + 1) % window_size
 
 @external
 def test_update_ema(chain_id: uint64, new_value: uint256):

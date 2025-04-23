@@ -8,12 +8,12 @@ from abis import gas_oracle_v3_abi
 SEPOLIA_ORACLE = oracle_addresses[11155111]
 
 @pytest.fixture
-def oracle(owner, project):
+def oracle_stub(owner, project):
     oracle = owner.deploy(project.oracle, sender=owner)
     return oracle
 
 @pytest.fixture
-def real_oracle(owner, project):
+def oracle(owner, project):
     oracle = owner.deploy(project.Oracle, sender=owner)
     # assign owner so we can create payloads
     oracle.setSignerAddress(owner.address, sender=owner)
@@ -36,7 +36,7 @@ def owner(accounts):
     return accounts[0]
 
 @pytest.fixture
-def controller(owner, real_oracle, project, chain):
+def controller(owner, oracle, project, chain):
     controller = owner.deploy(project.RewardController,
             params.kp,
             params.ki,
@@ -48,7 +48,7 @@ def controller(owner, real_oracle, project, chain):
             params.min_reward,
             params.max_reward,
             params.default_window_size,
-            real_oracle.address,
+            oracle.address,
             params.coeff,
             sender=owner)
 

@@ -128,7 +128,7 @@ contract Oracle {
 
 
 
-    function storeValuesWithReceipt(bytes memory dat) public returns (RecordReceipt[] memory receipts) {
+    function storeValuesWithReceipt(bytes memory dat) public returns (RecordReceipt[] memory reecipts) {
         uint init;
         uint offset;
         assembly {
@@ -171,16 +171,17 @@ contract Oracle {
                 }
                 scid = appendType(header.scid, typ);
 
-                Record storage rec = pStore[scid];
+                Record storage rec = pStore[scid]; 
                 if (rec.height < header.height) {
                     r[elWritten] = RecordReceipt(RecordKey(header.sid, header.cid, typ), rec, Record(header.height, header.ts, uint240(val)));
-                    pStore[scid] = Record(header.height, header.ts, uint240(val));
-                    
+                    pStore[scid] = Record(header.height, header.ts, uint240(val)); 
                 } else if (rec.height == header.height && rec.timestamp < header.ts) {
-                    receipts[elWritten] = RecordReceipt(RecordKey(header.sid, header.cid, typ), rec, Record(header.height, header.ts, uint240(val)));
+                    r[elWritten] = RecordReceipt(RecordKey(header.sid, header.cid, typ), rec, Record(header.height, header.ts, uint240(val)));
                     pStore[scid] = Record(header.height, header.ts, uint240(val));
-                  
-                }
+                } else {
+                    r[elWritten] = RecordReceipt(RecordKey(header.sid, header.cid, typ), rec, Record(0,0,0));
+                } 
+
                 elWritten +=1;
                 j++;
             }

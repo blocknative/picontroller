@@ -8,6 +8,10 @@ ethereum:
   sepolia:
     infura:
       uri: https://sepolia.infura.io/v3/809b114c339249a5a58cf4d058ab25a9
+base:
+  sepolia:
+    infura:
+      uri: https://base-sepolia.infura.io/v3/be270f89f34f48fa83080946343094f7
 vyper:
   enable_experimental_codegen: false
   version: 0.4.1  # or whatever exact version you want
