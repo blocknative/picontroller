@@ -59,7 +59,7 @@ struct TotalRewards:
     total_rewards: uint256
 
 BASEFEE_REWARD_TYPE: public(constant(uint16)) = 107
-MAX_PAYLOADS: public(constant(uint256)) = 16
+MAX_PAYLOADS: public(constant(uint256)) = 32
 MAX_UPDATERS: public(constant(uint32)) = 2**16
 MAX_PAYLOAD_SIZE: public(constant(uint256)) = 16384
 EMA_ALPHA: public(constant(uint256)) = 818181818181818176 # 1 - 2/11

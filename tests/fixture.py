@@ -8,11 +8,6 @@ from abis import gas_oracle_v3_abi
 SEPOLIA_ORACLE = oracle_addresses[11155111]
 
 @pytest.fixture
-def oracle_stub(owner, project):
-    oracle = owner.deploy(project.oracle, sender=owner)
-    return oracle
-
-@pytest.fixture
 def oracle(owner, project):
     oracle = owner.deploy(project.Oracle, sender=owner)
     # assign owner so we can create payloads
@@ -20,11 +15,6 @@ def oracle(owner, project):
     # assign gasnet signer so we can use gasnet payloads
     oracle.setSignerAddress("0x26222b1a8C061f7Ebda1f4a4d15A66683260dBE5", sender=owner)
     return oracle
-
-@pytest.fixture
-def store(owner, project):
-    store = owner.deploy(project.store, sender=owner)
-    return store
 
 @pytest.fixture
 def oracle_sepolia(owner, project):

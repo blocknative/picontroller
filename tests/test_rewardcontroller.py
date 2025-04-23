@@ -14,7 +14,7 @@ from ape import Contract
 
 import params
 
-from fixture import owner, store, oracle, controller
+from fixture import owner, oracle, controller
 from fixture import oracle
 import utils
 
@@ -606,7 +606,7 @@ class TestRewardController:
 
         assert controller.get_average(1) == ((controller.get_window_size(1)- 1)*5 + 10) // controller.get_window_size(1)
 
-    def test_time_reward(self, owner, store, controller, chain):
+    def test_time_reward(self, owner, controller, chain):
         assert controller.calc_time_reward(0) == controller.min_time_reward()
         assert controller.calc_time_reward(35*10**18) == controller.min_time_reward()
         assert controller.calc_time_reward(2740774000*10**18) == controller.max_time_reward()
@@ -620,7 +620,7 @@ class TestRewardController:
         assert controller.max_time_reward() == params.max_reward//2
         assert controller.calc_time_reward(params.max_ts) - params.max_reward//2  < 10**15
 
-    def test_deviation_reward(self, owner, store, controller, chain):
+    def test_deviation_reward(self, owner, controller, chain):
         assert controller.calc_deviation_reward(0) == controller.min_deviation_reward()
         assert controller.calc_time_reward(1000000000*10**18) == controller.max_deviation_reward()
 
@@ -698,9 +698,6 @@ class TestRewardController:
 
 
         assert controller.oracle() == oracle.address
-        #oracle.storeValuesWithReceipt(a, sender=owner)
-
-        #a += DELIMITER
 
         with pytest.raises(Exception):
             controller.freeze()
@@ -1001,8 +998,8 @@ class TestRewardController:
 
         # first update, call
         rewards = controller.update_many.call(payload)
-        print("rewards")
-        print(rewards)
+        #print("rewards")
+        #print(rewards)
 
         """
         receipts = oracle.storeValuesWithReceipt.call(payload)
@@ -1032,8 +1029,8 @@ class TestRewardController:
 
         # second update, call
         rewards = controller.update_many.call(payload2)
-        print("rewards2")
-        print(rewards)
+        #print("rewards2")
+        #print(rewards)
 
         # ensure only i=1 time and dev rewards are non-zero
         for i, r in enumerate(rewards):
@@ -1127,111 +1124,7 @@ class TestRewardController:
         assert controller.rewards(owner) == first_balance + params.min_reward
         """
 
-    def test_prepare_header(self, store, controller):
-        version = 1
-        height = 12345678
-        chainid = 56
-        systemid = 2
-        ts = 9876543210
-        plen = 512
-
-        expected_value = (
-            (plen << (48 + 8 + 64 + 64 + 8)) |
-            (ts << (8 + 64 + 64 + 8)) |
-            (systemid << (64 + 64 + 8)) |
-            (chainid << (64 + 8)) |
-            (height << 8) |
-            version
-        )
-        expected_bytes32 = expected_value.to_bytes(32, byteorder='big')
-
-        result = store.prepare_header(version, height, chainid, systemid, ts, plen)
-
-        assert result == expected_bytes32, "Header packing failed in Vyper!"
-
-    def test_decode_header(self, store, owner):
-        # Define the input hex data as bytes
-        a: bytes = bytes.fromhex("0000000000000003019460ee47e9020000000000000001000000000149dad401006b0000000000000000000000000000000000000000000000000011dab0f6ee0070000000000000000000000000000000000000000000000000000a04855e220141000000000000000000000000000000000000000000000000000005290f62089b3891d48dd725e0c8370155fee14aac001fe061f23d0c8003469af1d8e4201200d1e03e17bbfcfd866fc50d153be546ffadc022c046f1dd82441242a1f28e1c")
-
-        plen, scid, ts, h = store.decode_header(a)
-        assert h == 21617364
-        assert ts == 1736793016297
-        assert plen == 3
-        assert scid == 2417851639229258349477888
-
-    def test_append_type(self, store, owner):
-        # Define the input hex data as bytes
-        scid = 2417851639229258349477888;
-        typ = 107;
-        #scid: uint88 = convert(2417851639229258349477888, uint88)
-        #typ: uint16 = 107
-
-        scida = store.append_type(scid, typ)
-        assert scida == scid + typ
-
-    def test_get_key(self, store, owner):
-        scid = store.get_key(2, 1, 107)
-        assert scid == 2417851639229258349477888 + 107
-
-    def test_store_values(self, store, owner):
-        # Define the input hex data as bytes
-        a: bytes = bytes.fromhex("0000000000000003019460ee47e9020000000000000001000000000149dad401006b0000000000000000000000000000000000000000000000000011dab0f6ee0070000000000000000000000000000000000000000000000000000a04855e220141000000000000000000000000000000000000000000000000000005290f62089b3891d48dd725e0c8370155fee14aac001fe061f23d0c8003469af1d8e4201200d1e03e17bbfcfd866fc50d153be546ffadc022c046f1dd82441242a1f28e1c")
-
-        store.store_values(a, sender=owner)
-
-        # Simulate block timestamp update
-        #owner.provider.set_timestamp(1736793026)
-
-        # Retrieve and validate stored data
-        endf, h, ts = store.get(2, 1, 107)
-        assert endf == 76683474670
-        assert h == 21617364
-        assert ts == 1736793016297
-
-        endf, h, ts = store.get(2, 1, 112)
-        assert endf == 43025522210
-        assert h == 21617364
-        assert ts == 1736793016297
-
-        endf, h, ts = store.get(2, 1, 321)
-        assert endf == 86576994
-        assert h == 21617364
-        assert ts == 1736793016297
-
-    def test_get_value(self, store, owner):
-        a: bytes = bytes.fromhex("0000000000000003019460ee47e9020000000000000001000000000149dad401006b0000000000000000000000000000000000000000000000000011dab0f6ee0070000000000000000000000000000000000000000000000000000a04855e220141000000000000000000000000000000000000000000000000000005290f62089b3891d48dd725e0c8370155fee14aac001fe061f23d0c8003469af1d8e4201200d1e03e17bbfcfd866fc50d153be546ffadc022c046f1dd82441242a1f28e1c")
-        """
-        print("first full val")
-        print(a[32:64].hex())
-        print("first val typ")
-        print(int(a[32:64][:2].hex(), 16))
-
-        print("second full val")
-        print(a[64:96].hex())
-        print("second val typ")
-        print(int(a[64:96][:2].hex(), 16))
-
-        print("3rd full val")
-        print(a[96:128].hex())
-        print("3rd val typ")
-        print(int(a[96:128][:2].hex(), 16))
-        """
-
-        val, typ = store.get_value(a, 0)
-        assert (val, typ) == (76683474670, 107)
-        val, typ = store.get_value(a, 1)
-        assert (val, typ) == (43025522210, 112)
-        val, typ = store.get_value(a, 2)
-        assert (val, typ) == (86576994, 321)
-
-    def test_decode(self, store, owner):
-        a: bytes = bytes.fromhex("0000000000000003019460ee47e9020000000000000001000000000149dad401006b0000000000000000000000000000000000000000000000000011dab0f6ee0070000000000000000000000000000000000000000000000000000a04855e220141000000000000000000000000000000000000000000000000000005290f62089b3891d48dd725e0c8370155fee14aac001fe061f23d0c8003469af1d8e4201200d1e03e17bbfcfd866fc50d153be546ffadc022c046f1dd82441242a1f28e1c")
-
-        sid, cid, bf_val, tip_val, ts, h = store.decode(a, 107)
-        assert bf_val == 76683474670
-        assert sid == 2
-        assert cid == 1
-    def _test_rewards(self, controller, oracle, owner):
+    def test_rewards(self, controller, oracle, owner):
 
         sid = 2
         cid = 1
@@ -1250,7 +1143,7 @@ class TestRewardController:
             "typ_values": utils.create_typ_values(gas_price)
             }
 
-        a = utils.create_payload(**payload_params)
+        a = utils.create_signed_payload(web3=web3, signer=owner, **payload_params)
 
         rewards_before_a = controller.rewards(owner)
         print(f"{rewards_before_a=}")
@@ -1277,7 +1170,7 @@ class TestRewardController:
         _, current_height, current_ts = oracle.get(sid, cid, 107)
         print(f"{current_height=}, {current_ts=}")
 
-        b = utils.create_payload(**payload_params)
+        b = utils.create_signed_payload(web3=web3, signer=owner, **payload_params)
 
         controller.update_many(b, sender=owner)
         rewards_after_b = controller.rewards(owner)
@@ -1300,7 +1193,8 @@ class TestRewardController:
         _, current_height, current_ts = oracle.get(sid, cid, 107)
         print(f"{current_height=}, {current_ts=}")
 
-        c = utils.create_payload(**payload_params)
+        c = utils.create_signed_payload(web3=web3, signer=owner, **payload_params)
+
 
         controller.update_many(c, sender=owner)
         rewards_after_c = controller.rewards(owner)
@@ -1323,7 +1217,7 @@ class TestRewardController:
         _, current_height, current_ts = oracle.get(sid, cid, 107)
         print(f"{current_height=}, {current_ts=}")
 
-        d = utils.create_payload(**payload_params)
+        d = utils.create_signed_payload(web3=web3, signer=owner, **payload_params)
 
         controller.update_many(d, sender=owner)
         rewards_after_d = controller.rewards(owner)
@@ -1346,7 +1240,7 @@ class TestRewardController:
         _, current_height, current_ts = oracle.get(sid, cid, 107)
         print(f"{current_height=}, {current_ts=}")
 
-        e = utils.create_payload(**payload_params)
+        e = utils.create_signed_payload(web3=web3, signer=owner, **payload_params)
 
         controller.update_many(e, sender=owner)
         rewards_after_e = controller.rewards(owner)
