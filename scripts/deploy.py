@@ -1,8 +1,9 @@
-from scripts.oracles import oracle_addresses
+import sys
+from scripts.addresses import oracle_addresses
 from scripts import params
 import ape
 from ape import accounts
-from ape import project
+from ape import project, chain
 
 from ape_accounts import import_account_from_private_key
 
@@ -26,6 +27,8 @@ def deploy(params, chain_id, owner, project):
     return controller
 
 def main():
+    #chain_id = 84532 # base sepolia
+    chain_id = 11155111 # sepolia
     account = accounts.load("blocknative_dev")
-    controller = deploy(params, 11155111, account, project)
+    controller = deploy(params, chain_id, account, project)
     print(f"{controller.address=}")
