@@ -3,9 +3,7 @@
 
 interface IOracle:
     def get(systemid: uint8, cid: uint64, typ: uint16) -> (uint256, uint64, uint48): view
-    def storeValues(dat: Bytes[MAX_PAYLOAD_SIZE]): nonpayable
     def storeValuesWithReceipt(dat: Bytes[MAX_PAYLOAD_SIZE]) -> DynArray[RecordReceipt, MAX_PAYLOADS]: nonpayable
-    #def storeValuesWithReceipt(dat: Bytes[MAX_PAYLOAD_SIZE]): nonpayable
 
 struct RecordReceipt:
     systemid: uint8
