@@ -14,3 +14,6 @@ vyper:
   use_docker: false  # optional: set to true if you prefer Docker
   settings:
     optimize: false
+
+logging:
+  level: DEBUG

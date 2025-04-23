@@ -13,6 +13,15 @@ def oracle(owner, project):
     return oracle
 
 @pytest.fixture
+def real_oracle(owner, project):
+    oracle = owner.deploy(project.Oracle, sender=owner)
+    # assign owner so we can create payloads
+    oracle.setSignerAddress(owner.address, sender=owner)
+    # assign gasnet signer so we can use gasnet payloads
+    oracle.setSignerAddress("0x26222b1a8C061f7Ebda1f4a4d15A66683260dBE5", sender=owner)
+    return oracle
+
+@pytest.fixture
 def store(owner, project):
     store = owner.deploy(project.store, sender=owner)
     return store
@@ -27,7 +36,7 @@ def owner(accounts):
     return accounts[0]
 
 @pytest.fixture
-def controller(owner, oracle, project, chain):
+def controller(owner, real_oracle, project, chain):
     controller = owner.deploy(project.RewardController,
             params.kp,
             params.ki,
@@ -39,7 +48,7 @@ def controller(owner, oracle, project, chain):
             params.min_reward,
             params.max_reward,
             params.default_window_size,
-            oracle.address,
+            real_oracle.address,
             params.coeff,
             sender=owner)
 

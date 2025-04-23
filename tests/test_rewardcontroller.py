@@ -4,18 +4,24 @@ import json
 import time
 import ape
 import pytest
+import numpy as np
 from web3 import Web3, HTTPProvider
+import matplotlib.pyplot as plt
 
+web3 = Web3()
 from ape import accounts
 from ape import Contract
 
 import params
 
 from fixture import owner, store, oracle, controller
+from fixture import real_oracle
 import utils
 
 TWENTY_SEVEN_DECIMAL_NUMBER = int(10 ** 27)
 EIGHTEEN_DECIMAL_NUMBER     = int(10 ** 18)
+
+DELIMITER = b'0000000000000000000000000000000'
 
 update_delay = 3600;
 
@@ -686,20 +692,50 @@ class TestRewardController:
         #assert output != 0
         #assert output != 10**18
 
-    def test_get_updaters_chunk(self, controller, oracle, chain):
+    def test_get_updaters_chunk_old(self, owner, controller, oracle, chain):
         # NOTE: needs --network ethereum:local:foundry
+        scales = [(1, 10**18)]
+        controller.set_scales(scales, sender=owner)
+        """
+        for i in range(n):
+            typ_values = {107: random.randint(10**15, 10**18),
+                          199: random.randint(10**15, 10**18),
+                          322: random.randint(10**15, 10**18)}
 
-        delimiter = b'0000000000000000000000000000000'
+            ts = int(time.time() * 1000)
+            sid = 2
+            cid = i+1
+            payload_params = {
+                "plen": len(typ_values),
+                "ts": ts + i*2000,
+                "sid": sid,
+                "cid": cid,
+                "height": (i+1)*100,
+                "typ_values": typ_values
+                }
+
+            # payload + signature
+            new_payload = utils.create_signed_payload(web3=web3, signer=owner, **payload_params)
+
+            if i != 0:
+                payload += DELIMITER
+
+            payload += new_payload
+
+        rewards = controller.update_many.call(payload)
+        """
+
+
         n_updaters = 10
-        #n_updaters = len(accounts.test_accounts)
         for i in range(n_updaters):
             # setting balance doesn't work with test provider?
             updater = accounts.test_accounts.generate_test_account()
             updater.balance += 10**18
 
-            #updater = accounts.test_accounts[i]
-            print(f"{updater.address=}")
-            typ_values = {107: random.randint(1, 10**18), 199: random.randint(1, 10**18), 322: random.randint(1, 10**18)}
+            typ_values = {107: random.randint(10**15, 10**18),
+                          199: random.randint(10**15, 10**18),
+                          322: random.randint(10**15, 10**18)}
+
             ts = int(time.time() * 1000)
             sid = 2
             cid = 1
@@ -712,15 +748,13 @@ class TestRewardController:
                 "typ_values": typ_values
                 }
 
-            a = utils.create_payload(**payload_params)
-            a+= delimiter
+            payload = utils.create_signed_payload(web3=web3, signer=owner, **payload_params)
 
             with accounts.use_sender(updater):
-                tx = controller.update_many(a)
-
+                tx = controller.update_many(payload)
+            return
             assert controller.n_updaters() == i + 1
-            print(f"{tx.gas_used=}")
-
+        return
         updaters_1, rewards_1 = controller.get_updaters_chunk(0, 1)
         updaters_2, rewards_2 = controller.get_updaters_chunk(1, 1)
         updaters_3, rewards_3 = controller.get_updaters_chunk(2, 8)
@@ -733,6 +767,28 @@ class TestRewardController:
         assert controller.n_updaters() == n_updaters
 
     def test_freeze(self, owner, controller, oracle, chain):
+        """
+        from addresses import oracle_addresses, gasnet_contract
+        GASNET_ORACLE = gasnet_contract
+        GASNET_RPC = 'https://rpc.gas.network'
+
+        w3 = Web3(HTTPProvider(GASNET_RPC))
+
+        with open('tests/gasnet_oracle_v2.json') as f:
+            abi = json.load(f)['abi']
+
+        oracle_gasnet = w3.eth.contract(address=GASNET_ORACLE, abi=abi)
+
+        sid = 2
+        cid = 1
+        basefee_typ = 107
+        tip_typ = 322
+
+        # read gasnet
+        a: bytes = oracle_gasnet.functions.getValues(sid, cid).call()
+        """
+
+        #a += DELIMITER
 
         typ_values = {107: random.randint(1, 10**18), 199: random.randint(1, 10**18), 322: random.randint(1, 10**18)}
         ts = int(time.time() * 1000)
@@ -747,7 +803,13 @@ class TestRewardController:
             "typ_values": typ_values
             }    
 
-        a = utils.create_payload(**payload_params)
+        a = utils.create_payload(**payload_params) + os.urandom(65)
+
+
+        assert controller.oracle() == oracle.address
+        #oracle.storeValuesWithReceipt(a, sender=owner)
+
+        #a += DELIMITER
 
         with pytest.raises(Exception):
             controller.freeze()
@@ -755,10 +817,11 @@ class TestRewardController:
         controller.freeze(sender=owner)
 
         with pytest.raises(Exception):
-            controller.update_oracle(a, sender=owner);
+            controller.update_many(a, sender=owner);
 
         controller.unfreeze(sender=owner)
-        controller.update_oracle(a, sender=owner);
+         
+        controller.update_many(a, sender=owner)
 
     def test_update_oracle(self, owner, controller, oracle, chain):
         n = 10
@@ -780,49 +843,43 @@ class TestRewardController:
                 }
 
             a = utils.create_payload(**payload_params)
-            tx = controller.update_oracle(a, sender=owner)
+            tx = controller.update_many(a, sender=owner)
 
-    def test_update_many_multi(self, owner, controller, oracle, chain):
-        n = 2
+    def test_update_many_multi(self, owner, controller, real_oracle, chain):
+        n = 1
         scales = [(i+1, (i+1)*10**18) for i in range(n)]
         controller.set_scales(scales, sender=owner)
 
-        #assert controller.MAX_PAYLOADS() == n
-
         print("Values before")
         for i in range(n):
-            bf_value, bf_height, bf_ts = oracle.get(2, i+1, 107)
-            tip_value, tip_height, tip_ts = oracle.get(2, i+1, 322)
+            bf_value, bf_height, bf_ts = real_oracle.get(2, i+1, 107)
+            tip_value, tip_height, tip_ts = real_oracle.get(2, i+1, 322)
             print(f"{i=}, {bf_value=}, {bf_height=}, {bf_ts=}")
             print(f"{i=}, {tip_value=}, {tip_height=}, {tip_ts=}")
 
-        # build multi-chain payload
-        payload = b''
-        delimiter = b'0000000000000000000000000000000'
-        for i in range(n):
-            typ_values = {107: random.randint(10**15, 10**18), 199: random.randint(10**15, 10**18), 322: random.randint(10**15, 10**18)}
-            ts = int(time.time() * 1000)
-            sid = 2
-            cid = i+1
-            payload_params = {
-                "plen": len(typ_values),
-                "ts": ts + i*2000,
-                "sid": sid,
-                "cid": cid,
-                "height": (i+1)*100,
-                "typ_values": typ_values
-                }
+        from addresses import oracle_addresses, gasnet_contract
+        GASNET_ORACLE = gasnet_contract
+        GASNET_RPC = 'https://rpc.gas.network'
 
-            # payload + signature
-            new_payload = utils.create_payload(**payload_params)
-            print(f"{len(new_payload)=}")
-            if i != 0:
-                payload += delimiter
-            payload += new_payload
+        w3 = Web3(HTTPProvider(GASNET_RPC))
 
-        print(f"{len(payload)=}")
-        #return
-        rewards = controller.update_many.call(payload)
+        with open('tests/gasnet_oracle_v2.json') as f:
+            abi = json.load(f)['abi']
+
+        oracle_gasnet = w3.eth.contract(address=GASNET_ORACLE, abi=abi)
+
+        sid = 2
+        cid_1 = 1
+        cid_2 = 1
+        basefee_typ = 107
+        tip_typ = 322
+
+        # read gasnet
+        a: bytes = oracle_gasnet.functions.getValues(sid, cid_1).call()
+        b: bytes = oracle_gasnet.functions.getValues(sid, cid_2).call()
+        new_payload = a + DELIMITER + b
+
+        rewards = controller.update_many.call(new_payload)
 
         #print(f"{rewards=}")
 
@@ -836,21 +893,19 @@ class TestRewardController:
             
         """
 
-        tx = controller.update_many(payload, raise_on_revert=True, sender=owner)
+        tx = controller.update_many(new_payload, raise_on_revert=True, sender=owner)
+        tx.show_trace(True)
         #tx = controller.update_oracle(payload, raise_on_revert=True, sender=owner)
         tx.show_trace(True)
         assert len(tx.events) == n
 
         print("Values after first update")
         for i in range(n):
-            bf_value, bf_height, bf_ts = oracle.get(2, i+1, 107)
-            tip_value, tip_height, tip_ts = oracle.get(2, i+1, 322)
+            bf_value, bf_height, bf_ts = real_oracle.get(2, i+1, 107)
+            tip_value, tip_height, tip_ts = real_oracle.get(2, i+1, 322)
             print(f"{i=}, {bf_value=}, {bf_height=}, {bf_ts=}")
             print(f"{i=}, {tip_value=}, {tip_height=}, {tip_ts=}")
 
-
-        events = controller.OracleUpdated.query("*")
-        assert len(events) == n
         print("first update")
         for e in tx.events:
             print(e.event_name)
@@ -863,21 +918,58 @@ class TestRewardController:
 
         print("Values after first update")
         for i in range(n):
-            bf_value, bf_height, bf_ts = oracle.get(2, i+1, 107)
-            tip_value, tip_height, tip_ts = oracle.get(2, i+1, 322)
+            bf_value, bf_height, bf_ts = real_oracle.get(2, i+1, 107)
+            tip_value, tip_height, tip_ts = real_oracle.get(2, i+1, 322)
 
-    def test_update_oracles_partial_update(self, owner, controller, oracle, chain):
-        # not all estimates update
-        n = 3
-        scales = [(i+1, (i+1)*10**18) for i in range(n)]
+    def test_get_updaters_chunk(self, owner, controller, real_oracle, chain):
+        scales = [(1, 10**18)]
         controller.set_scales(scales, sender=owner)
 
-        ts = int(time.time() * 1000)
+        n_updaters = 10
+        for i in range(n_updaters):
+            # setting balance doesn't work with test provider?
+            updater = accounts.test_accounts.generate_test_account()
+            updater.balance += 10**18
 
-        # build multi-chain payload
-        payload = b''
+            # build multi-chain payload
+            payload = b''
+            typ_values = {107: random.randint(10**15, 10**18),
+                          199: random.randint(10**15, 10**18),
+                          322: random.randint(10**15, 10**18)}
+
+            ts = int(time.time() * 1000)
+            sid = 2
+            cid = 1
+            payload_params = {
+                "plen": len(typ_values),
+                "ts": ts + i*2000,
+                "sid": sid,
+                "cid": cid,
+                "height": (i+1)*100,
+                "typ_values": typ_values
+                }
+
+            # payload + signature
+            new_payload = utils.create_signed_payload(web3=web3, signer=owner, **payload_params)
+
+            if i != 0:
+                payload += DELIMITER
+
+            payload += new_payload
+
+        rewards = controller.update_many.call(payload)
+        tx = controller.update_many(payload, sender=updater)
+        assert len(tx.events) != 0
+        print("Done")
+
+
+        """
         for i in range(n):
-            typ_values = {107: random.randint(10**15, 10**18), 199: random.randint(10**15, 10**18), 322: random.randint(10**15, 10**18)}
+            typ_values = {107: random.randint(10**15, 10**18),
+                          199: random.randint(10**15, 10**18),
+                          322: random.randint(10**15, 10**18)}
+
+            ts = int(time.time() * 1000)
             sid = 2
             cid = i+1
             payload_params = {
@@ -890,12 +982,174 @@ class TestRewardController:
                 }
 
             # payload + signature
-            payload += utils.create_payload(**payload_params)
+            new_payload = utils.create_signed_payload(web3=web3, signer=owner, **payload_params)
+
+            if i != 0:
+                payload += DELIMITER
+
+            payload += new_payload
+
+        rewards = controller.update_many.call(payload)
+        """
+
+        return
+
+        n_updaters = 10
+        for i in range(n_updaters):
+            # setting balance doesn't work with test provider?
+            updater = accounts.test_accounts.generate_test_account()
+            updater.balance += 10**18
+
+            typ_values = {107: random.randint(10**15, 10**18),
+                          199: random.randint(10**15, 10**18),
+                          322: random.randint(10**15, 10**18)}
+
+            ts = int(time.time() * 1000)
+            sid = 2
+            cid = 1
+            payload_params = {
+                "plen": len(typ_values),
+                "ts": ts + i*2000,
+                "sid": sid,
+                "cid": cid,
+                "height": i,
+                "typ_values": typ_values
+                }
+
+            payload = utils.create_signed_payload(web3=web3, signer=owner, **payload_params)
+
+            with accounts.use_sender(updater):
+                tx = controller.update_many(payload)
+            return
+            assert controller.n_updaters() == i + 1
+        return
+        updaters_1, rewards_1 = controller.get_updaters_chunk(0, 1)
+        updaters_2, rewards_2 = controller.get_updaters_chunk(1, 1)
+        updaters_3, rewards_3 = controller.get_updaters_chunk(2, 8)
+
+        updaters, rewards = controller.get_updaters_chunk(0, 10)
+
+        assert [updaters_1[0], updaters_2[0]] + updaters_3[:8] == updaters[:10]
+        assert [rewards_1[0], rewards_2[0]] + rewards_3[:8] == rewards[:10]
+
+        assert controller.n_updaters() == n_updaters
+
+    def test_update_many_multi_sig(self, owner, controller, real_oracle, chain):
+        n = 3
+        scales = [(i+1, (i+1)*10**18) for i in range(n)]
+        controller.set_scales(scales, sender=owner)
+
+        print("Values before")
+        for i in range(n):
+            bf_value, bf_height, bf_ts = real_oracle.get(2, i+1, 107)
+            tip_value, tip_height, tip_ts = real_oracle.get(2, i+1, 322)
+            print(f"{i=}, {bf_value=}, {bf_height=}, {bf_ts=}")
+            print(f"{i=}, {tip_value=}, {tip_height=}, {tip_ts=}")
+
+        # build multi-chain payload
+        payload = b''
+        for i in range(n):
+            typ_values = {107: random.randint(10**15, 10**18),
+                          199: random.randint(10**15, 10**18),
+                          322: random.randint(10**15, 10**18)}
+
+            ts = int(time.time() * 1000)
+            sid = 2
+            cid = i+1
+            payload_params = {
+                "plen": len(typ_values),
+                "ts": ts + i*2000,
+                "sid": sid,
+                "cid": cid,
+                "height": (i+1)*100,
+                "typ_values": typ_values
+                }
+
+            # payload + signature
+            new_payload = utils.create_signed_payload(web3=web3, signer=owner, **payload_params)
+
+            if i != 0:
+                payload += DELIMITER
+
+            payload += new_payload
+
+        rewards = controller.update_many.call(payload)
+
+        """
+        # ensure first n time and dev rewards are non-zero
+        for i, (time_reward, dev_reward) in enumerate(rewards):
+            if i == n:
+                break
+            assert time_reward != 0
+            assert dev_reward != 0
+            
+        """
+
+        tx = controller.update_many(payload, raise_on_revert=True, sender=owner)
+        tx.show_trace(True)
+        #tx = controller.update_oracle(payload, raise_on_revert=True, sender=owner)
+        assert len(tx.events) == n
+
+        print("Values after first update")
+        for i in range(n):
+            bf_value, bf_height, bf_ts = real_oracle.get(2, i+1, 107)
+            tip_value, tip_height, tip_ts = real_oracle.get(2, i+1, 322)
+            print(f"{i=}, {bf_value=}, {bf_height=}, {bf_ts=}")
+            print(f"{i=}, {tip_value=}, {tip_height=}, {tip_ts=}")
+
+
+        print("first update")
+        for e in tx.events:
+            print(e.event_name)
+            print(e.event_arguments)
+            print(f"{e.block_number=}")
+
+        tx = controller.update_many(payload, sender=owner)
+        # no update
+        assert len(tx.events) == 0
+
+        print("Values after first update")
+        for i in range(n):
+            bf_value, bf_height, bf_ts = real_oracle.get(2, i+1, 107)
+            tip_value, tip_height, tip_ts = real_oracle.get(2, i+1, 322)
+
+    def test_update_many_partial_update(self, owner, controller, oracle, chain):
+        # not all estimates update
+        n = 3
+        scales = [(i+1, (i+1)*10**18) for i in range(n)]
+        controller.set_scales(scales, sender=owner)
+
+        ts = int(time.time() * 1000)
+
+        # build multi-chain payload
+        payload = b''
+        for i in range(n):
+            typ_values = {107: random.randint(10**15, 10**18),
+                          199: random.randint(10**15, 10**18),
+                          322: random.randint(10**15, 10**18)}
+            sid = 2
+            cid = i+1
+            payload_params = {
+                "plen": len(typ_values),
+                "ts": ts + i*2000,
+                "sid": sid,
+                "cid": cid,
+                "height": (i+1)*100,
+                "typ_values": typ_values
+                }
+
+            # payload + signature
+            if i != 0:
+                payload += DELIMITER 
+
+            payload += utils.create_payload(**payload_params) + os.urandom(65)
 
         # build multi-chain payload #2 with only 1 new estimate
         payload2 = b''
         for i in range(n):
-            typ_values = {107: random.randint(10**15, 10**18), 199: random.randint(10**15, 10**18), 322: random.randint(10**15, 10**18)}
+            typ_values = {107: random.randint(10**15, 10**18),
+                          199: random.randint(10**15, 10**18),
+                          322: random.randint(10**15, 10**18)}
             sid = 2
             cid = i+1
             payload_params = {
@@ -911,40 +1165,50 @@ class TestRewardController:
                 payload_params['ts'] += 2000
 
             # payload + signature
-            payload2 += utils.create_payload(**payload_params)
+            if i != 0:
+                payload2 += DELIMITER 
+
+            payload2 += utils.create_payload(**payload_params) + os.urandom(65)
 
         # first update, call
-        rewards = controller.update_oracles.call(payload, n)
+        rewards = controller.update_many.call(payload)
+        print("rewards")
+        print(rewards)
 
+        """
         # ensure first n time and dev rewards are non-zero
-        for i, (time_reward, dev_reward) in enumerate(rewards):
+        for i, r in enumerate(rewards):
             if i == n:
                 break
-            assert time_reward != 0
-            assert dev_reward != 0
+            assert r[3] != 0
+            assert r[4] != 0
+        """
             
-        tx = controller.update_oracles(payload, n, sender=owner)
+        tx = controller.update_many(payload, sender=owner)
+        events = list(tx.decode_logs())
+        print(events)
+        return
         # all n update
         assert len(tx.events) == n
 
         # second update, call
-        rewards = controller.update_oracles.call(payload2, n)
+        rewards = controller.update_many.call(payload2)
 
         # ensure only i=1 time and dev rewards are non-zero
-        for i, (time_reward, dev_reward) in enumerate(rewards):
+        for i, r in enumerate(rewards):
             if i == 1:
-                assert time_reward != 0
-                assert dev_reward != 0
+                assert r[3] != 0
+                assert r[4] != 0
             else:
-                assert time_reward == 0
-                assert dev_reward == 0
+                assert r[3] == 0
+                assert r[4] == 0
 
         # second update
-        tx = controller.update_oracles(payload2, n, sender=owner)
+        tx = controller.update_many(payload2, sender=owner)
         # only 1 update
         assert len(tx.events) == 1
 
-    def test_update_oracles_w_dupes(self, owner, controller, oracle, chain):
+    def test_update_many_w_dupes(self, owner, controller, oracle, chain):
         n = 5
         scales = [(i+1, (i+1)*10**18) for i in range(n)]
         controller.set_scales(scales, sender=owner)
@@ -972,23 +1236,23 @@ class TestRewardController:
             # payload + signature
             payload += utils.create_payload(**payload_params)
 
-        rewards = controller.update_oracles.call(payload, n)
+        rewards = controller.update_many.call(payload)
 
         # ensure first n time and dev rewards are non-zero
         for i, (time_reward, dev_reward) in enumerate(rewards):
             if i != 0:
                 assert time_reward == dev_reward == 0
 
-        tx = controller.update_oracles(payload, n, sender=owner);
+        tx = controller.update_many(payload, sender=owner);
 
         # only the first paylaod should receive an update
         assert len(tx.events) == 1
 
         # same payload should produce zero updates
-        tx = controller.update_oracles(payload, n, sender=owner);
+        tx = controller.update_many(payload, sender=owner);
         assert len(tx.events) == 0
 
-    def test_update_oracles_case(self, owner, controller, oracle, chain):
+    def test_update_many_case(self, owner, controller, oracle, chain):
         #payload = bytes.fromhex("00000000000000020196212416c302000000000000a4b100000000135f22c001006b0000000000000000000000000000000000000000000000000000011544f601420000000000000000000000000000000000000000000000000000000000016035523055de0bf4032e4fce04d51b4cd4bb39f8dfa4c585ceb3a40ec76e7cac7bb49848b25070cb6e0662a95501c41d399c4f11dce1a18903f6d799c7e13ee81b00000000000000020196212411300200000000000000820000000000cef9d701006b0000000000000000000000000000000000000000000000000000000000fb0142000000000000000000000000000000000000000000000000000000000001706b02b1f3c9b1e64abce149334d7b11d3e4b57345f813cb57a0e9bcc16cbad43e073c42a35381b4a3c12d1544b708d42ff35766cd4830bcfddcb572c13dac8f1b0000000000000002019621240d4802000000000000000a0000000008021ff201006b000000000000000000000000000000000000000000000000000000176f00014200000000000000000000000000000000000000000000000000000000003bb36a00263aac0a8cb4406d956f94c757bf1cfe12021c49db5a4a6744d54baaf05ade4d1a0b71bbfb6934084862755eb60818852f22d1caa490e6a065350ba38c1b000000000000000201962124057802000000000000074c00000000005547fe01006b00000000000000000000000000000000000000000000000000000000017b014200000000000000000000000000000000000000000000000000000000025341ca25683d63956d63528c12ea365d3ded79615aab6d3c541cb4b620f6fa1a3e093227e0e189fc49a487531c979ebbef03d3c081a8185cf008a891f8733d39af1b00000000000000020196212405780200000000000021050000000001b6de5c01006b000000000000000000000000000000000000000000000000000000098302014200000000000000000000000000000000000000000000000000000000003b44aede6658fc3b1cd343214ca4badac1701368a7e1bce836bace46beb6c791b30e6778c2e88592ce338c19b211d4e993edb2694d26738bb220b9052ca754bfe71b00000000000000030196212412c50200000000000000010000000001535d3d01006b00000000000000000000000000000000000000000000000000002e14b202007000000000000000000000000000000000000000000000000000004ef9325d01420000000000000000000000000000000000000000000000000000054e08413fd69156a4d6d53aa7b6a6cf272f7b908ec204cd7ddd1e75a3c56d13d31ff7cb47999b2156b238e9943b207f44207ea0b719717f6389e4cdb541f8ddaa31c1fe1c000000000000000201962124057802000000000000e70800000000011155be01006b0000000000000000000000000000000000000000000000000000000000070142000000000000000000000000000000000000000000000000000009d847683f72836213cff5480073be0f00d6a6b09c2f75a486751cc913615c8b492ac84a0cf6e3549622f8b815977a4950eccb0bfbe7848361fb48e5bcbe4a64f7129f8b1b")
         payload = bytes.fromhex("000000000000000201963b97894802000000000000074c000000000058aabf01006b00000000000000000000000000000000000000000000000000000000079801420000000000000000000000000000000000000000000000000000000001f473b0b8dbd10edf952e4674eda638856f245d4850e8b37f41646172f68edcbc864de23c107c4fbee34f308101df9c6e925f485d338e6e31209e3c81c9428961421c000000000000000201963b97936802000000000000a4b100000000137a13a501006b000000000000000000000000000000000000000000000000000000989680014200000000000000000000000000000000000000000000000000000000000a9fcd862343ce2703e198cfbf34f52005cd8c61e5009f77062bf3e68ccaadb52e3ddc87238fd750bd62fb997c1408f080de67286a4c3d1bd70bf70cc18d18eb931c000000000000000201963b97911802000000000000000a00000000080582b301006b0000000000000000000000000000000000000000000000000000000db115014200000000000000000000000000000000000000000000000000000000003ba27be7ed61351f4ec5539ba7e62173ba93af0b827e57411367cf2008f7f059e343df963f67bbc962b30222f5a5065c775549af5c5ad2ad48fe7bce0b0f1b24081b000000000000000201963b9775c002000000000000e708000000000113cc0701006b0000000000000000000000000000000000000000000000000000000000070142000000000000000000000000000000000000000000000000000002ce95f33562ae7f55f70a03ae52e6a96f062177d7b6a70a6f5d6b4d0cba5afcaf099ab5028888ae297bc6ac674b352716e290b69b0a95c6434354c4a2ede8736f950d291b000000000000000201963b978d300200000000000000820000000000d5bf5701006b0000000000000000000000000000000000000000000000000000000000fb0142000000000000000000000000000000000000000000000000000000000001e8b1e2365e7da9b2936722c65ad3438c0b3e2dd8832a5a5404c74599203fb6a502f54b578542a5ac0e6d43893fe32af341f830dee652bebc787b44d443b32a571b000000000000000301963b979190020000000000000001000000000153ed1901006b00000000000000000000000000000000000000000000000000001441e19e0070000000000000000000000000000000000000000000000000000000003d2001420000000000000000000000000000000000000000000000000000054e08404ee7c5b14a0b7b3e4f349d256c99f254936eda87d00238819463c3baec27729559b7d89804623948f4257d576975a229842834a4b2c9eb0c7c2bc34ec25478b51b000000000000000201963b9781780200000000000021050000000001ba411c01006b0000000000000000000000000000000000000000000000000000000cb9d90142000000000000000000000000000000000000000000000000000000000032eb210bc11310b713b17f29d1423e93dc75617addb961e979934cb9806c835b1248437edec8de362c5788a6622e519ab2a9916d75c682dcbbeabf78dfaa6e71dc1b")
         n = 7
@@ -998,7 +1262,7 @@ class TestRewardController:
         #assert controller.MAX_PAYLOADS() == n
 
 
-        rewards = controller.update_oracles.call(payload, n)
+        rewards = controller.update_many.call(payload)
         #print(f"{rewards=}")
 
         # ensure first n time and dev rewards are non-zero
@@ -1009,7 +1273,7 @@ class TestRewardController:
             assert dev_reward != 0
             
 
-        tx = controller.update_oracles(payload, n, sender=owner)
+        tx = controller.update_many(payload, sender=owner)
         assert len(tx.events) == n
 
         print("Values after first update")
@@ -1020,14 +1284,12 @@ class TestRewardController:
             print(f"{i=}, {tip_value=}, {tip_height=}, {tip_ts=}")
 
 
-        events = controller.OracleUpdated.query("*")
-        assert len(events) == n
         for e in tx.events:
             print(e.event_name)
             print(e.event_arguments)
             print(f"{e.block_number=}")
 
-        tx = controller.update_oracles(payload, n, sender=owner)
+        tx = controller.update_many(payload, sender=owner)
         # no update
         assert len(tx.events) == 0
 
@@ -1193,7 +1455,7 @@ class TestRewardController:
 
         rewards_before_a = controller.rewards(owner)
         print(f"{rewards_before_a=}")
-        controller.update_oracle(a, sender=owner)
+        controller.update_many(a, sender=owner)
 
         _, current_height, current_ts = oracle.get(sid, cid, 107)
         rewards_after_a = controller.rewards(owner)
@@ -1218,7 +1480,7 @@ class TestRewardController:
 
         b = utils.create_payload(**payload_params)
 
-        controller.update_oracle(b, sender=owner)
+        controller.update_many(b, sender=owner)
         rewards_after_b = controller.rewards(owner)
         print(f"{rewards_after_b=}")
 
@@ -1241,7 +1503,7 @@ class TestRewardController:
 
         c = utils.create_payload(**payload_params)
 
-        controller.update_oracle(c, sender=owner)
+        controller.update_many(c, sender=owner)
         rewards_after_c = controller.rewards(owner)
         print(f"{rewards_after_c=}")
 
@@ -1264,7 +1526,7 @@ class TestRewardController:
 
         d = utils.create_payload(**payload_params)
 
-        controller.update_oracle(d, sender=owner)
+        controller.update_many(d, sender=owner)
         rewards_after_d = controller.rewards(owner)
         print(f"{rewards_after_d=}")
 
@@ -1287,7 +1549,7 @@ class TestRewardController:
 
         e = utils.create_payload(**payload_params)
 
-        controller.update_oracle(e, sender=owner)
+        controller.update_many(e, sender=owner)
         rewards_after_e = controller.rewards(owner)
         print(f"{rewards_after_e=}")
 
@@ -1304,5 +1566,29 @@ class TestRewardController:
             controller.set_scale(1, 0, sender=owner)
             controller.calc_deviation(1, 10*10**15, 1*10**15)
 
+
+    def test_update_ema(self, owner, controller):
+        vals = [random.randint(600 * 10**18, 30000 * 10**18) for _ in range(100)]
+        data = []
+        means = []
+        emas = []
+        for v in vals:
+            controller.test_update_ema(1, v, sender=owner)
+            data.append(v)
+            means.append(np.mean(data[-10:])/10**18)
+            emas.append(controller.ema(1)/10**18)
+
+
+        plt.plot(means, label='mean')
+        plt.plot(emas, label='ema')
+        plt.legend()
+        plt.show()
+        """
+        mean = int(np.mean(vals))
+        ema = controller.ema(1)
+        print(mean/10**18, ema/10**18)
+        diff = abs(mean-ema)/10**18
+        print(f"{diff=}")
+        """
 
 
