@@ -371,14 +371,12 @@ def _calc_reward_mult(cid: uint64, time_since: uint256) -> int256:
     window_size: uint256 = self.window_size
 
     # update oracle update_interval
-    #self._add_value(cid, time_since, count, window_size)
     self._update_ema(cid, time_since)
 
     # Dont use feedback if number of samples is lt window size
     if count + 1 < window_size:
         return EIGHTEEN_DECIMAL_NUMBER
 
-    #update_interval: int256 = convert(self._get_average(cid), int256)
     update_interval: int256 = convert(self.ema[cid], int256)
     error: int256 = self._error(convert(self.target_time_since, int256), update_interval)
 
@@ -401,25 +399,8 @@ def _add_updater(updater: address):
 
 @external
 @view
-def get_updaters_chunk_old(start: uint256, count: uint256) -> (address[256], uint256[256]):
-    assert count <= 256
-    result_updaters: address[256] = empty(address[256])
-    result_rewards: uint256[256] = empty(uint256[256])
-
-    for i: uint256 in range(count, bound=256):
-        idx: uint256 = start + i
-        updater: address = self.updaters[idx]
-        result_updaters[i] = updater
-        result_rewards[i] = self.rewards[updater]
-
-    return result_updaters, result_rewards
-
-@external
-@view
 def get_updaters_chunk(start: uint256, count: uint256) -> DynArray[TotalRewards, 256]:
     assert count <= 256
-    #result_updaters: address[256] = empty(address[256])
-    #result_rewards: uint256[256] = empty(uint256[256])
     total_rewards: DynArray[TotalRewards, 256] = []
     updater_rewards: TotalRewards = empty(TotalRewards)
 
@@ -428,19 +409,15 @@ def get_updaters_chunk(start: uint256, count: uint256) -> DynArray[TotalRewards,
         updater: address = self.updaters[idx]
         if updater == empty(address):
             break
-        #result_updaters[i] = updater
-        #result_rewards[i] = self.rewards[updater]
         total_rewards.append(TotalRewards(address=updater, total_rewards=self.rewards[updater]))
 
     return total_rewards
 
 @external
-#def update_many(dat: Bytes[MAX_PAYLOAD_SIZE]) -> EnhancedReward[MAX_PAYLOADS]:
 def update_many(dat: Bytes[MAX_PAYLOAD_SIZE]) -> DynArray[EnhancedReward, MAX_PAYLOADS]:
     assert not self.frozen, "Rewards contract is frozen"
 
     receipts: DynArray[RecordReceipt, MAX_PAYLOADS] = extcall self.oracle.storeValuesWithReceipt(dat)
-    #rewards: EnhancedReward[MAX_PAYLOADS] = empty(EnhancedReward[MAX_PAYLOADS])
     rewards: DynArray[EnhancedReward, MAX_PAYLOADS] = []
     cid: uint64 = 0
     typ: uint16 = 0
@@ -583,34 +560,6 @@ def _calc_deviation_reward(deviation: int256, coeff: Coefficients) -> int256:
 @view
 def _calc_reward(time_since: int256, deviation: int256, coeff: Coefficients) -> (int256, int256):
     return self._calc_time_reward(time_since, coeff), self._calc_deviation_reward(deviation, coeff)
-
-#@external
-#def test_add_value(chain_id: uint64, new_value: uint256):
-#    count: uint256 = self.count[chain_id]
-#    window_size: uint256 = self.window_size
-#    self._add_value(chain_id, new_value, count, window_size)
-
-#@internal
-#def _add_value(chain_id: uint64, new_value: uint256, count: uint256, window_size: uint256):
-    #Add a new value to the circular buffer and update rolling sum.
-
-#    old_value: uint256 = 0
-
-#    if count < window_size:
-        # Buffer not full yet
-#        self.count[chain_id] += 1
-#    else:
-        # Buffer full: value at index will be overwritten
-#        old_value = self.oracle_values[chain_id][self.index[chain_id]]
-
-    # Update rolling sum
-#    self.rolling_sum[chain_id] = self.rolling_sum[chain_id] + new_value - old_value
-
-    # Store new value in buffer
-#    self.oracle_values[chain_id][self.index[chain_id]] = new_value
-
-    # Update index (circular increment)
-#    self.index[chain_id] = (self.index[chain_id] + 1) % window_size
 
 @external
 def test_update_ema(chain_id: uint64, new_value: uint256):
