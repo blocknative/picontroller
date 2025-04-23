@@ -1378,16 +1378,12 @@ class TestRewardController:
             emas.append(controller.ema(1)/10**18)
 
 
+        # Uncomment to see comparative plot
+        """
         plt.plot(means, label='mean')
         plt.plot(emas, label='ema')
         plt.legend()
         plt.show()
-        """
-        mean = int(np.mean(vals))
-        ema = controller.ema(1)
-        print(mean/10**18, ema/10**18)
-        diff = abs(mean-ema)/10**18
-        print(f"{diff=}")
         """
 
 
