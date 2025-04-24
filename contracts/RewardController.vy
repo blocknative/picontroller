@@ -1,5 +1,5 @@
 #pragma version 0.4.1
-#pragma optimize none
+#pragma optimize gas
 
 interface IOracle:
     def get(systemid: uint8, cid: uint64, typ: uint16) -> (uint256, uint64, uint48): view

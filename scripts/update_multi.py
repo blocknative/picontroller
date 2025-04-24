@@ -14,7 +14,7 @@ from scripts import params
 from scripts.addresses import reward_addresses
 
 DELIMITER = b'0000000000000000000000000000000'
-#chain_id = 84532 # base sepolia
+chain_id = 84532 # base sepolia
 chain_id = 11155111 # sepolia
 rewards = reward_addresses[chain_id]
 controller = project.RewardController.at(rewards)

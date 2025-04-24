@@ -14,6 +14,7 @@ from scripts import params
 from scripts.addresses import oracle_addresses, reward_addresses
 
 chain_id = 11155111
+#chain_id = 84532
 REWARDS = reward_addresses[chain_id]
 controller = project.RewardController.at(REWARDS)
 
