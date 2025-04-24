@@ -11,11 +11,13 @@ from ape import project
 
 from scripts.abis import gas_oracle_v2_abi
 from scripts import params
-from scripts.oracles import oracle_addresses
+from scripts.addresses import reward_addresses
 
-SEPOLIA_ORACLE = oracle_addresses[11155111]#'0xCc936bE977BeDb5140C5584d8B6043C9068622A6'
-REWARDS = '0xaFad46DE6A22C968cF2EDa42b19E38cd9beb304f'
-controller = project.RewardController.at(REWARDS)
+DELIMITER = b'0000000000000000000000000000000'
+chain_id = 84532 # base sepolia
+chain_id = 11155111 # sepolia
+rewards = reward_addresses[chain_id]
+controller = project.RewardController.at(rewards)
 
 # Gasnet
 w3 = Web3(HTTPProvider('https://rpc.gas.network'))
@@ -32,22 +34,21 @@ print(f"{rewards_before=}")
 print(f"{total_rewards=}")
 
 sid = 2
-cid_1 = 42161
-cid_2 = 10
-tip_typ = params.tip_reward_type
 
-# read gasnet
-dat_1: bytes = oracle_gasnet.functions.getValues(sid, cid_1).call()
-dat_2: bytes = oracle_gasnet.functions.getValues(sid, cid_2).call()
-d = b'0000000000000000000000000000000'
-dat = dat_1 + d + dat_2
+payload = b''
+for i, cid in enumerate(params.scales.keys()):
+    # read gasnet
+    dat: bytes = oracle_gasnet.functions.getValues(sid, cid).call()
+    if i != 0:
+          payload += DELIMITER
+    payload += dat
 
-rewards = controller.update_many.call(dat)
+rewards = controller.update_many.call(payload)
 print("pending rewards")
 print(rewards)
 
 # update oracle w/ gasnet payload
-tx = controller.update_many(dat, sender=account, raise_on_revert=True, gas=3000000)
+tx = controller.update_many(payload, sender=account, raise_on_revert=True, gas=3000000)
 tx.show_trace(True)
 
 print(tx.events)

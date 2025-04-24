@@ -11,9 +11,11 @@ from ape import project
 
 from scripts.abis import gas_oracle_v2_abi
 from scripts import params
-from scripts.oracles import oracle_addresses
+from scripts.addresses import oracle_addresses, reward_addresses
 
-REWARDS = '0xaFad46DE6A22C968cF2EDa42b19E38cd9beb304f'
+chain_id = 11155111
+#chain_id = 84532
+REWARDS = reward_addresses[chain_id]
 controller = project.RewardController.at(REWARDS)
 
 def set_scales(account, controller, params):
