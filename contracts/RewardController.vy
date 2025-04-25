@@ -28,6 +28,7 @@ event OracleUpdated:
     reward_mult: int256
 
 struct Scale:
+    system_id: uint8
     chain_id: uint64
     scale: uint256
 
@@ -42,10 +43,6 @@ struct ControlOutput:
     ki: int80
     co_bias: int80
 
-struct Reward:
-    time_reward: uint256
-    deviation_reward: uint256
-
 struct EnhancedReward:
     system_id: uint8
     chain_id: uint64
@@ -58,11 +55,16 @@ struct TotalRewards:
     address: address
     total_rewards: uint256
 
+EIGHTEEN_DECIMAL_NUMBER: constant(int256) = 10**18
+THIRTY_SIX_DECIMAL_NUMBER: constant(int256) = 10**36
+EIGHTEEN_DECIMAL_NUMBER_U: constant(uint256) = 10**18
+
 BASEFEE_REWARD_TYPE: public(constant(uint16)) = 107
 MAX_PAYLOADS: public(constant(uint256)) = 32
 MAX_UPDATERS: public(constant(uint32)) = 2**16
 MAX_PAYLOAD_SIZE: public(constant(uint256)) = 16384
 EMA_ALPHA: public(constant(uint256)) = 818181818181818176 # 1 - 2/11
+ALPHA_COMP: constant(uint256) = EIGHTEEN_DECIMAL_NUMBER_U - EMA_ALPHA
 
 authorities: public(HashMap[address, bool])
 
@@ -79,40 +81,31 @@ min_time_reward: public(int256)
 max_time_reward: public(int256)
 min_deviation_reward: public(int256)
 max_deviation_reward: public(int256)
-window_size: public(uint256)
+min_window_size: public(uint32)
 has_updated: public(HashMap[address, bool])
 updaters: public(address[MAX_UPDATERS])
 n_updaters:  public(uint32)
 frozen: public(bool)
 oracle: public(IOracle)
 
-error_integral: public(HashMap[uint64, int256])
-last_output: public(HashMap[uint64, int256])
+error_integral: public(HashMap[uint72, int256])
+last_output: public(HashMap[uint72, int256])
 
 rewards: public(HashMap[address, uint256])
 total_rewards: public(uint256)
-scales: public(HashMap[uint64, uint256])
+scales: public(HashMap[uint72, uint256])
+count: public(HashMap[uint72, uint32])
 
-oracle_values: HashMap[uint64, HashMap[uint256, uint256]]  # Circular buffer simulated via mapping
-index: HashMap[uint64, uint256]  # Pointer to next insert position (0 to N-1)
-count: HashMap[uint64, uint256]  # Number of elements inserted so far, up to N
-rolling_sum: HashMap[uint64, uint256]  # Sum of last N values for efficient averaging
-
-ema: public(HashMap[uint64, uint256]) # EMA
+interval_ema: public(HashMap[uint72, uint256]) # EMA
 
 coeff: public(Coefficients)
-intercept: public(int256)
-
-EIGHTEEN_DECIMAL_NUMBER: constant(int256) = 10**18
-THIRTY_SIX_DECIMAL_NUMBER: constant(int256) = 10**36
-EIGHTEEN_DECIMAL_NUMBER_U: constant(uint256) = 10**18
 
 @deploy
 def __init__(_kp: int80, _ki: int80, _co_bias: int80,
              _output_upper_bound: int256, _output_lower_bound: int256, _target_time_since: uint256,
              _tip_reward_type: uint16,
              _min_reward: uint256, _max_reward: uint256,
-             _window_size: uint256, oracle: address,
+             _min_window_size: uint32, oracle: address,
              _coeff: int96[4]):
     #
     assert _output_upper_bound >= _output_lower_bound, "RewardController/invalid-bounds"
@@ -131,7 +124,7 @@ def __init__(_kp: int80, _ki: int80, _co_bias: int80,
     self.max_time_reward = convert(_max_reward//2, int256)
     self.min_deviation_reward = convert(_min_reward//2, int256)
     self.max_deviation_reward = convert(_max_reward//2, int256)
-    self.window_size = _window_size
+    self.min_window_size = _min_window_size
     self.oracle = IOracle(oracle)
     self.coeff = Coefficients(zero=_coeff[0], one=_coeff[1], two=_coeff[2], three=_coeff[3])
 
@@ -148,13 +141,24 @@ def remove_authority(account: address):
 @external
 def set_scales(scales: DynArray[Scale, 64]):
     assert self.authorities[msg.sender]
+    scid: uint72 = 0
     for s: Scale in scales:
-        self.scales[s.chain_id] = s.scale
+        scid = convert(shift(convert(s.chain_id, uint256), 8) | convert(s.system_id, uint256), uint72)
+        assert s.scale != 0, "scale can't be zero"
+        self.scales[scid] = s.scale
 
 @external
-def set_scale(chain_id: uint64, scale: uint256):
+@view
+def get_scale(system_id: uint8, chain_id: uint64) -> uint256:
+    scid: uint72 = convert(shift(convert(chain_id, uint256), 8) | convert(system_id, uint256), uint72)
+    return self.scales[scid]
+
+@external
+def set_scale(system_id: uint8, chain_id: uint64, scale: uint256):
     assert self.authorities[msg.sender]
-    self.scales[chain_id] = scale
+    scid: uint72 = convert(shift(convert(chain_id, uint256), 8) | convert(system_id, uint256), uint72)
+    assert scale != 0, "scale can't be zero"
+    self.scales[scid] = scale
 
 @external
 def freeze():
@@ -214,81 +218,18 @@ def modify_parameters_uint(parameter: String[32], val: uint256):
     else:
         raise "RewardController/modify-unrecognized-param"
 
-@external
-@pure
-def test_decode_head(dat: Bytes[MAX_PAYLOAD_SIZE]) -> (uint8, uint64, uint16, uint48, uint64):
-    return self._decode_head(dat)
-
-@internal
-@pure
-def _decode_head(dat: Bytes[MAX_PAYLOAD_SIZE]) -> (uint8, uint64, uint16, uint48, uint64):
-    h: uint64 = convert(slice(dat, 23, 8), uint64)  # Extract last 8 bytes of 32-byte block, excluding version
-    cid: uint64 = convert(slice(dat, 15, 8), uint64)
-    sid: uint8 = convert(slice(dat, 14, 1), uint8)
-    plen: uint16 = convert(slice(dat, 6, 2), uint16)
-    ts: uint48 = convert(slice(dat, 8, 6), uint48)  # Extract 6 bytes before sid
-
-    return sid, cid, plen, ts, h
-
-@internal
-@pure
-def _decode_plen(dat: Bytes[MAX_PAYLOAD_SIZE]) -> uint16:
-    plen: uint16 = convert(slice(dat, 6, 2), uint16)
-    return plen
-
-@external
-@pure
-def decode(dat: Bytes[MAX_PAYLOAD_SIZE], tip_typ: uint16) -> (uint8, uint64, uint240, uint240, uint48, uint64):
-    return self._decode(dat, tip_typ)
-
-@internal
-@pure
-def _decode(dat: Bytes[MAX_PAYLOAD_SIZE], tip_typ: uint16) -> (uint8, uint64, uint240, uint240, uint48, uint64):
-    sid: uint8 = 0 
-    cid: uint64 = 0 
-    plen: uint16 = 0 
-    ts: uint48 = 0 
-    h: uint64 = 0 
-
-    sid, cid, plen, ts, h = self._decode_head(dat)
-    plen_int: uint256 = convert(plen, uint256)
-
-    typ: uint16 = 0 
-    val: uint240 = 0 
-    basefee_val: uint240 = 0 
-    tip_val: uint240 = 0 
-    
-    for j: uint256 in range(plen_int, bound=256):
-        val_b: Bytes[32] = slice(dat, 32 + j*32, 32)  
-        typ = convert(slice(val_b, 0, 2), uint16)
-        val = convert(slice(val_b, 2, 30), uint240)
-
-        if typ == BASEFEE_REWARD_TYPE:
-            basefee_val = val
-        elif typ == tip_typ:
-            tip_val = val
-
-        # if both have been set, stop parsing
-        if basefee_val != 0 and tip_val !=0:
-            break
-
-    return sid, cid, basefee_val, tip_val, ts, h
-
-@internal
-@view
-def _riemann_sum(x: int256, y: int256)-> int256:
-    return (x + y) // 2
-
 @internal
 @view
 def _bound_pi_output(pi_output: int256) -> int256:
-    bounded_pi_output: int256 = pi_output
-    if pi_output < self.output_lower_bound:
-        bounded_pi_output = self.output_lower_bound
-    elif pi_output > self.output_upper_bound:
-        bounded_pi_output = self.output_upper_bound
+    lb: int256 = self.output_lower_bound 
+    ub: int256 = self.output_upper_bound
 
-    return bounded_pi_output
+    if pi_output < lb:
+        return lb
+    elif pi_output > ub:
+        return ub
+
+    return pi_output
 
 @external
 @view
@@ -302,39 +243,51 @@ def clamp_error_integral(bounded_pi_output:int256, error_integral: int256, new_e
 
 @internal
 @view
-def _clamp_error_integral(bounded_pi_output:int256, error_integral: int256, new_error_integral: int256, new_area: int256) -> int256: 
+def _clamp_error_integral(
+    bounded_pi_output: int256,
+    error_integral:    int256,
+    new_error_integral: int256,
+    new_area:           int256
+) -> int256:
     # This logic is strictly for a *reverse-acting* controller where controller
     # output is opposite sign of error(kp and ki < 0)
-    clamped_error_integral: int256 = new_error_integral
-    if (bounded_pi_output == self.output_lower_bound and new_area > 0 and error_integral > 0):
-        clamped_error_integral = clamped_error_integral - new_area
-    elif (bounded_pi_output == self.output_upper_bound and new_area < 0 and error_integral < 0):
-        clamped_error_integral = clamped_error_integral - new_area
-    return clamped_error_integral
+
+    lb: int256 = self.output_lower_bound
+    ub: int256 = self.output_upper_bound
+
+    if (
+        (bounded_pi_output == lb and new_area > 0  and error_integral > 0)
+        or
+        (bounded_pi_output == ub and new_area < 0  and error_integral < 0)
+    ):
+        return new_error_integral - new_area
+
+    # default: no clamp
+    return new_error_integral
 
 @internal
 @view
-def _get_new_error_integral(cid: uint64, error: int256) -> (int256, int256):
-    return (self.error_integral[cid] + error, error)
+def _get_new_error_integral(scid: uint72, error: int256) -> (int256, int256):
+    return (self.error_integral[scid] + error, error)
 
 @external
 @view
-def get_new_error_integral(cid: uint64, error: int256) -> (int256, int256):
-    return self._get_new_error_integral(cid, error)
+def get_new_error_integral(scid: uint72, error: int256) -> (int256, int256):
+    return self._get_new_error_integral(scid, error)
 
 @internal
 @view
-def _get_raw_pi_output(error: int256, errorI: int256) -> (int256, int256, int256):
-    # // output = P + I = Kp * error + Ki * errorI
+def _get_raw_pi_output(error: int256, errorI: int256) -> int256:
+    # output = P + I = Kp * error + Ki * errorI
     control_output: ControlOutput = self.control_output
     p_output: int256 = (error * convert(control_output.kp, int256)) // EIGHTEEN_DECIMAL_NUMBER
     i_output: int256 = (errorI * convert(control_output.ki, int256)) // EIGHTEEN_DECIMAL_NUMBER
 
-    return (convert(control_output.co_bias, int256) + p_output + i_output, p_output, i_output)
+    return convert(control_output.co_bias, int256) + p_output + i_output
 
 @external
 @view
-def get_raw_pi_output(error: int256, errorI: int256) -> (int256, int256, int256):
+def get_raw_pi_output(error: int256, errorI: int256) -> int256:
     return self._get_raw_pi_output(error, errorI)
 
 @external
@@ -349,41 +302,47 @@ def _error(target: int256, measured: int256) -> int256:
 
 @external
 @view
-def calc_deviation(cid: uint64, new_value: uint256, current_value: uint256) -> uint256:
-    return self._calc_deviation(cid, new_value, current_value)
+def calc_deviation(scid: uint72, new_value: uint256, current_value: uint256) -> uint256:
+    return self._calc_deviation(scid, new_value, current_value)
 
 @internal
 @view
-def _calc_deviation(cid: uint64, new_value: uint256, current_value: uint256) -> uint256:
-    target_scale: uint256 = self.scales[cid]
-    assert target_scale != 0, "scale for cid is zero"
+def _calc_deviation(scid: uint72, new_value: uint256, current_value: uint256) -> uint256:
+    # calculates how many scales the new_value has deviated from current_value
+    target_scale: uint256 = self.scales[scid]
+    assert target_scale != 0, "unknown scid"
 
+    # sign doesn't matter, take abs value
     if new_value > current_value:
         return (new_value - current_value)*EIGHTEEN_DECIMAL_NUMBER_U//target_scale
     else:
         return (current_value - new_value)*EIGHTEEN_DECIMAL_NUMBER_U//target_scale
 
 @internal
-def _calc_reward_mult(cid: uint64, time_since: uint256) -> int256:
-    count: uint256 = self.count[cid]
-    window_size: uint256 = self.window_size
+def _calc_reward_mult(scid: uint72, time_since: uint256) -> int256:
+    count: uint32 = self.count[scid]
+    min_window_size: uint32 = self.min_window_size
 
     # update oracle update_interval
-    self._update_ema(cid, time_since)
+    interval_ema: uint256 = self._update_interval_ema(scid, time_since)
 
     # Dont use feedback if number of samples is lt window size
-    if count + 1 < window_size:
+    if count + 1 < min_window_size:
+        self.count[scid] = count + 1
         return EIGHTEEN_DECIMAL_NUMBER
 
-    update_interval: int256 = convert(self.ema[cid], int256)
+    update_interval: int256 = convert(interval_ema, int256)
     error: int256 = self._error(convert(self.target_time_since, int256), update_interval)
 
     reward_mult: int256 = 0
-    p_output: int256 = 0
-    i_output: int256 = 0
+    #p_output: int256 = 0
+    #i_output: int256 = 0
 
     # update feedback mechanism and get current reward multiplier
-    reward_mult, p_output, i_output = self._update(cid, error)
+    #reward_mult, p_output, i_output = self._update(scid, error)[0]
+    reward_mult = self._update_feedback(scid, error)
+
+    self.count[scid] = count + 1
 
     return reward_mult
 
@@ -417,13 +376,18 @@ def update_many(dat: Bytes[MAX_PAYLOAD_SIZE]) -> DynArray[EnhancedReward, MAX_PA
 
     receipts: DynArray[RecordReceipt, MAX_PAYLOADS] = extcall self.oracle.storeValuesWithReceipt(dat)
     rewards: DynArray[EnhancedReward, MAX_PAYLOADS] = []
-    cid: uint64 = 0
-    typ: uint16 = 0
-    rec: RecordReceipt = empty(RecordReceipt)
+
+    tip_reward_type: uint16 = self.tip_reward_type
+    coeff: Coefficients = self.coeff
     old_tip_val: uint240 = 0
     old_bf_val: uint240 = 0
     new_tip_val: uint240 = 0
     new_bf_val: uint240 = 0
+
+    tip_system_id: uint8 = 0
+    tip_chain_id: uint64 = 0
+    bf_system_id: uint8 = 0
+    bf_chain_id: uint64 = 0
 
     bf_found: bool = False
     tip_found: bool = False
@@ -439,20 +403,25 @@ def update_many(dat: Bytes[MAX_PAYLOAD_SIZE]) -> DynArray[EnhancedReward, MAX_PA
     deviation_reward_adj: int256 = 0
     time_reward_adj_u: uint256 = 0
     deviation_reward_adj_u: uint256 = 0
+    scid: uint72 = 0
 
     self._add_updater(msg.sender)
 
-    idx: uint256 = 0
-    for i: uint256 in range(len(receipts), bound=MAX_PAYLOADS):
-        rec = receipts[i]
+    for rec: RecordReceipt in receipts:
+        sid: uint8 = rec.systemid
+        cid: uint64 = rec.cid
 
-        if rec.typ == self.tip_reward_type:
+        if rec.typ == tip_reward_type:
             old_tip_val = rec.old_value
             new_tip_val = rec.new_value
+            tip_system_id = sid
+            tip_chain_id = cid
             tip_found = True
         elif rec.typ == BASEFEE_REWARD_TYPE:
             old_bf_val = rec.old_value
             new_bf_val = rec.new_value
+            bf_system_id = sid
+            bf_chain_id = cid
             bf_found = True
         else:
             continue
@@ -461,37 +430,42 @@ def update_many(dat: Bytes[MAX_PAYLOAD_SIZE]) -> DynArray[EnhancedReward, MAX_PA
         if not (tip_found and bf_found):
             continue
 
+        assert tip_system_id == bf_system_id, "System IDs for tip and basefee types don't match. Out of order data?"
+        assert tip_chain_id == bf_chain_id, "Chain IDs for tip and basefee types don't match. Out of order data?"
+
         # reset these
         tip_found = False
         bf_found = False
 
         old_gasprice = old_tip_val + old_bf_val
       
-        # type was not updated, so no reward
+        # zero new_height means this type was not updated, so no reward
         if (rec.new_height == 0):
-            rewards.append(EnhancedReward(system_id=rec.systemid,
-                                          chain_id=rec.cid,
+            rewards.append(EnhancedReward(system_id=sid,
+                                          chain_id=cid,
                                           height=rec.old_height,
                                           gas_price=old_gasprice,
                                           time_reward=0,
                                           deviation_reward=0))
-            #idx += 1
             continue
 
         new_gasprice = new_tip_val + new_bf_val
 
+        scid = convert(shift(convert(rec.cid, uint256), 8) | convert(sid, uint256), uint72)
+
         # calculate deviation and staleness(time_since) for new values
-        deviation = self._calc_deviation(rec.cid, convert(new_gasprice, uint256), convert(old_gasprice, uint256))
+
+        deviation = self._calc_deviation(scid, convert(new_gasprice, uint256), convert(old_gasprice, uint256))
 
         time_since = convert(rec.new_timestamp - rec.old_timestamp, uint256) * EIGHTEEN_DECIMAL_NUMBER_U
 
         # calculate reward
         time_reward, deviation_reward = self._calc_reward(convert(time_since, int256)//1000,
                                                           convert(deviation, int256),
-                                                          self.coeff)
+                                                          coeff)
      
         # calculate reward multiplier
-        reward_mult = self._calc_reward_mult(rec.cid, time_since//1000)
+        reward_mult = self._calc_reward_mult(scid, time_since//1000)
 
         # adjust rewards with multiplier
         time_reward_adj = reward_mult * time_reward // EIGHTEEN_DECIMAL_NUMBER
@@ -504,25 +478,19 @@ def update_many(dat: Bytes[MAX_PAYLOAD_SIZE]) -> DynArray[EnhancedReward, MAX_PA
         self.rewards[msg.sender] += time_reward_adj_u + deviation_reward_adj_u
         self.total_rewards += time_reward_adj_u + deviation_reward_adj_u
 
-        log OracleUpdated(updater=msg.sender, system_id=rec.systemid, chain_id=rec.cid,
+        log OracleUpdated(updater=msg.sender, system_id=sid, chain_id=cid,
                           new_value=new_gasprice, deviation=deviation, time_since=time_since,
                           time_reward=time_reward_adj_u, deviation_reward=deviation_reward_adj_u,
                           reward_mult=reward_mult)
 
-        rewards.append(EnhancedReward(system_id=rec.systemid,
-                                      chain_id=rec.cid,
+        rewards.append(EnhancedReward(system_id=sid,
+                                      chain_id=cid,
                                       height=rec.old_height,
                                       gas_price=old_gasprice,
                                       time_reward=time_reward_adj_u,
                                       deviation_reward=deviation_reward_adj_u))
-        #idx += 1
 
     return rewards
-
-@internal
-def _update_oracle_stub(dat: Bytes[MAX_PAYLOAD_SIZE], l: uint256)-> (uint256, uint256):
-    tip_typ: uint16 = self.tip_reward_type
-    return 0, 0
 
 @external
 @view
@@ -559,67 +527,53 @@ def _calc_deviation_reward(deviation: int256, coeff: Coefficients) -> int256:
 def _calc_reward(time_since: int256, deviation: int256, coeff: Coefficients) -> (int256, int256):
     return self._calc_time_reward(time_since, coeff), self._calc_deviation_reward(deviation, coeff)
 
-@external
-def test_update_ema(chain_id: uint64, new_value: uint256):
-    self._update_ema(chain_id, new_value)
+#@external
+#def test_update_interval_ema(scid: uint72, new_value: uint256) -> uint256:
+#    return self._update_interval_ema(scid, new_value)
 
 @internal
-def _update_ema(chain_id: uint64, new_value: uint256):
-    current_ema: uint256 = self.ema[chain_id]
-    self.ema[chain_id] = ((EIGHTEEN_DECIMAL_NUMBER_U - EMA_ALPHA) * new_value + EMA_ALPHA * current_ema)//EIGHTEEN_DECIMAL_NUMBER_U
+def _update_interval_ema(scid: uint72, new_value: uint256) -> uint256:
+    current_ema: uint256 = self.interval_ema[scid]
+    new_ema: uint256 = (ALPHA_COMP * new_value + EMA_ALPHA * current_ema)//EIGHTEEN_DECIMAL_NUMBER_U
+    self.interval_ema[scid] = new_ema
+    return new_ema
 
-@external
-@view
-def get_average(chain_id: uint64) -> uint256:
-    return self._get_average(chain_id)
-
-@internal
-@view
-def _get_average(chain_id: uint64) -> uint256:
-    if self.count[chain_id] == 0:
-        return 0  # Avoid division by zero if no values added yet
-    return self.rolling_sum[chain_id] // self.count[chain_id]
-
-@external
-def test_update(cid: uint64, error: int256) -> (int256, int256, int256):
-    return self._update(cid, error)
+#@external
+#def test_update_feedback(scid: uint72, error: int256) -> int256:
+#    return self._update_feedback(scid, error)
 
 @internal
-def _update(cid: uint64, error: int256) -> (int256, int256, int256):
+def _update_feedback(scid: uint72, error: int256) -> int256:
     # update feedback mechanism
-    error_integral: int256 = self.error_integral[cid]
+    error_integral: int256 = self.error_integral[scid]
     new_error_integral: int256 = error_integral + error
 
     pi_output: int256 = 0
-    p_output: int256 = 0
-    i_output: int256 = 0
-    (pi_output, p_output, i_output) = self._get_raw_pi_output(error, new_error_integral)
+    pi_output = self._get_raw_pi_output(error, new_error_integral)
 
     bounded_pi_output: int256 = self._bound_pi_output(pi_output)
 
-    self.error_integral[cid] = self._clamp_error_integral(bounded_pi_output, error_integral, new_error_integral, error)
+    self.error_integral[scid] = self._clamp_error_integral(bounded_pi_output, error_integral, new_error_integral, error)
 
-    self.last_output[cid] = bounded_pi_output
+    self.last_output[scid] = bounded_pi_output
 
-    return (bounded_pi_output, p_output, i_output)
+    return bounded_pi_output
 
 @external
 @view
-def get_new_pi_output(cid: uint64, error: int256) -> (int256, int256, int256):
-    return self._get_new_pi_output(cid, error)
+def get_new_pi_output(scid: uint72, error: int256) -> int256:
+    return self._get_new_pi_output(scid, error)
 
 @internal
 @view
-def _get_new_pi_output(cid:  uint64, error: int256) -> (int256, int256, int256):
+def _get_new_pi_output(scid:  uint72, error: int256) -> int256:
     new_error_integral: int256 = 0
     tmp: int256 = 0
-    (new_error_integral, tmp) = self._get_new_error_integral(cid, error)
+    (new_error_integral, tmp) = self._get_new_error_integral(scid, error)
 
     pi_output: int256 = 0
-    p_output: int256 = 0
-    i_output: int256 = 0
-    (pi_output, p_output, i_output) = self._get_raw_pi_output(error, new_error_integral)
+    pi_output = self._get_raw_pi_output(error, new_error_integral)
 
     bounded_pi_output: int256 = self._bound_pi_output(pi_output)
 
-    return (bounded_pi_output, p_output, i_output)
+    return bounded_pi_output

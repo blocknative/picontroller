@@ -49,7 +49,8 @@ def controller(owner, oracle, project, chain):
     return controller
 
 def set_scales(account, controller, params):
-    scales = list(zip(params.scales.keys(), params.scales.values()))
+    # this creates a list of (system_id, chain_id, scale) tuples
+    scales = [(x[0][0], x[0][1], x[1]) for x in list(zip(params.scales.keys(), params.scales.values()))]
     controller.set_scales(scales, sender=account)
     #for s in params.scales.keys():
     #    print(s, controller.scales(s))
