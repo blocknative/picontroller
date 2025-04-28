@@ -7,16 +7,14 @@ from eth_abi import decode
 
 from ape import accounts, networks
 from ape import Contract
-from ape import project
+from ape import project, chain
 
 from scripts.abis import gas_oracle_v2_abi
 from scripts import params
 from scripts.addresses import reward_addresses
 
 DELIMITER = b'0000000000000000000000000000000'
-chain_id = 84532 # base sepolia
-chain_id = 11155111 # sepolia
-rewards = reward_addresses[chain_id]
+rewards = reward_addresses[chain.chain_id]
 controller = project.RewardController.at(rewards)
 
 # Gasnet
@@ -33,11 +31,11 @@ total_rewards = controller.total_rewards()
 print(f"{rewards_before=}")
 print(f"{total_rewards=}")
 
-sid = 2
-
 payload = b''
-for i, cid in enumerate(params.scales.keys()):
+for i, scid in enumerate(params.scales.keys()):
     # read gasnet
+    sid = scid[0]
+    cid = scid[1]
     dat: bytes = oracle_gasnet.functions.getValues(sid, cid).call()
     if i != 0:
           payload += DELIMITER
