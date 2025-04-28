@@ -13,6 +13,7 @@ from ape import accounts
 from ape import Contract
 
 import params
+from addresses import oracle_addresses, gasnet_contract
 
 from fixture import owner, oracle, controller
 from fixture import oracle
@@ -91,7 +92,7 @@ class TestRewardController:
             controller.modify_parameters_int("output_lower_bound", controller.output_upper_bound() + 1, sender=owner);
 
     def test_get_next_output_zero_error(self, owner, controller):
-        (pi_output,_,_) = controller.get_new_pi_output(1,0);
+        pi_output = controller.get_new_pi_output(1,0);
         assert pi_output == params.co_bias + 0
         assert controller.error_integral(1) == 0
 
@@ -102,7 +103,7 @@ class TestRewardController:
         error = relative_error(int(1.1E18), 10**27);
         assert error == -100000000000000000000000000
 
-        (pi_output,_,_) = controller.get_new_pi_output(1,error);
+        pi_output = controller.get_new_pi_output(1,error);
         assert pi_output != 0
         assert controller.error_integral(1) == 0
         assert pi_output == min(params.co_bias + params.kp * int(error/10**18) + params.ki * int(error/10**18), params.output_upper_bound)
@@ -112,7 +113,7 @@ class TestRewardController:
 
     def test_get_raw_output_zero_error(self, owner, controller):
         error = relative_error(EIGHTEEN_DECIMAL_NUMBER, TWENTY_SEVEN_DECIMAL_NUMBER);
-        (pi_output,_,_) = controller.get_raw_pi_output(error, 0);
+        pi_output = controller.get_raw_pi_output(error, 0);
         assertEq(pi_output, params.co_bias + 0);
         assertEq(controller.error_integral(1), 0);
 
@@ -121,8 +122,7 @@ class TestRewardController:
 
     def test_get_raw_output_nonzero_error(self, owner, controller):
         error = int(10**20)
-        (pi_output,p_output,i_output) = controller.get_raw_pi_output(error, 0);
-        assertEq(p_output, params.kp * int(error/1E18));
+        pi_output = controller.get_raw_pi_output(error, 0);
         assertEq(controller.error_integral(1), 0);
 
         # Verify did not change state
@@ -130,9 +130,8 @@ class TestRewardController:
 
     def test_get_raw_output_small_nonzero_error(self, owner, controller):
         error = int(10**18)
-        (pi_output,p_output,i_output) = controller.get_raw_pi_output(error, 0);
+        pi_output = controller.get_raw_pi_output(error, 0);
         assert pi_output < 0
-        assert p_output == params.kp * int(error/1E18)
         assert controller.error_integral(1) == 0
 
         # Verify did not change state
@@ -140,8 +139,7 @@ class TestRewardController:
 
     def test_get_raw_output_large_nonzero_error(self, owner, controller):
         error = int(10**20) * int(10**18)
-        (pi_output,p_output,i_output) = controller.get_raw_pi_output(error, 0);
-        assertEq(p_output, params.kp * int(error/1E18));
+        pi_output = controller.get_raw_pi_output(error, 0);
         assertEq(controller.error_integral(1), 0);
 
         # Verify did not change state
@@ -149,7 +147,7 @@ class TestRewardController:
 
     def test_first_update(self, owner, controller, chain):
         next_ts = chain.pending_timestamp
-        controller.test_update(1,1, sender=owner)
+        controller.test_update_feedback(1,1, sender=owner)
         # TODO use events
         #assert controller.last_update_time(1) == next_ts
         assert controller.error_integral(1) == 1
@@ -157,14 +155,14 @@ class TestRewardController:
 
     def test_first_update_zero_error(self, owner, controller, chain):
         next_ts = chain.pending_timestamp
-        controller.test_update(1,0, sender=owner)
+        controller.test_update_feedback(1,0, sender=owner)
         # TODO use events
         #assertEq(controller.last_update_time(1), next_ts);
         assertEq(controller.error_integral(1), 0);
 
     def test_two_updates(self, owner, controller, chain):
-        controller.test_update(1,1, sender=owner)
-        controller.test_update(1,2, sender=owner)
+        controller.test_update_feedback(1,1, sender=owner)
+        controller.test_update_feedback(1,2, sender=owner)
         assert controller.error_integral(1) != 0
         assert controller.error_integral(100) == 0
 
@@ -174,32 +172,26 @@ class TestRewardController:
         # positive error
         error = controller.error(1000*10**18, 999*10**18)
         assert error > 0
-        (pi_output, p_output, i_output) = controller.get_new_pi_output(1,error);
+        pi_output = controller.get_new_pi_output(1,error);
 
         assert pi_output == params.kp * error//10**18  + params.ki * error//10**18 + controller.control_output().co_bias
         assert controller.error_integral(1) == 0
 
         # negative error
         error = controller.error(999*10**18, 1000*10**18)
-        (pi_output, p_output, i_output) = controller.get_new_pi_output(1,error);
+        pi_output = controller.get_new_pi_output(1,error);
         assert pi_output == params.kp * error//10**18  + params.ki * error//10**18 + controller.control_output().co_bias
         assert controller.error_integral(1) == 0
 
     def test_first_negative_error(self, owner, controller, chain):
         error = controller.error(999*10**18, 1000*10**18)
-        (pi_output, p_output, i_output) = controller.get_new_pi_output(1,error)
+        pi_output = controller.get_new_pi_output(1,error)
         assert pi_output == params.kp * error//10**18 + params.ki * error//10**18 + controller.control_output().co_bias
-        assert p_output == params.kp * error//10**18
-        assert i_output == params.ki * error//10**18
-
 
         next_ts = chain.pending_timestamp
-        controller.test_update(1,error, sender=owner);
+        controller.test_update_feedback(1,error, sender=owner);
         # TODO use events
-        #(update_time, pi_output, p_output, i_output) = controller.last_update(1)
         assert pi_output == params.kp * error//10**18 + params.ki * error//10**18 + controller.control_output().co_bias
-        assert p_output == params.kp * error//10**18
-        assert i_output == params.ki * error//10**18
 
         # TODO use events
         #assert controller.last_update_time(1) == next_ts
@@ -208,22 +200,15 @@ class TestRewardController:
 
     def test_first_positive_error(self, owner, controller, chain):
         error = controller.error(1000*10**18, 999*10**18)
-        (pi_output, p_output, i_output) = controller.get_new_pi_output(1,error)
+        pi_output = controller.get_new_pi_output(1,error)
         assert pi_output == params.kp * error//10**18 + params.ki * error//10**18 + controller.control_output().co_bias
-        assert p_output == params.kp * error//10**18
-        assert i_output == params.ki * error//10**18
-
 
         next_ts = chain.pending_timestamp
-        controller.test_update(1,error, sender=owner);
+        controller.test_update_feedback(1,error, sender=owner);
         # TODO use events
-        #(update_time, pi_output, p_output, i_output) = controller.last_update(1)
         assert pi_output == params.kp * error//10**18 + params.ki * error//10**18 + controller.control_output().co_bias
-        assert p_output == params.kp * error//10**18
-        assert i_output == params.ki * error//10**18
 
         # TODO use events
-        #assert controller.last_update_time(1) == next_ts
         assert controller.error_integral(1) == error
 
     def test_basic_integral(self, owner, controller, chain):
@@ -233,7 +218,7 @@ class TestRewardController:
         chain.pending_timestamp += update_delay
 
         error1 = controller.error(1000*10**18, 999*10**18)
-        controller.test_update(1,error1, sender=owner);
+        controller.test_update_feedback(1,error1, sender=owner);
 
         error_integral1 = controller.error_integral(1);
         assert error_integral1 == error1
@@ -242,7 +227,7 @@ class TestRewardController:
 
         # Second update
         error2 = controller.error(1001*10**18, 999*10**18)
-        controller.test_update(1,error2, sender=owner);
+        controller.test_update_feedback(1,error2, sender=owner);
 
         error_integral2 = controller.error_integral(1);
 
@@ -253,7 +238,7 @@ class TestRewardController:
 
         # Third update
         error3 = controller.error(950*10**18, 999*10**18)
-        controller.test_update(1,error3, sender=owner);
+        controller.test_update_feedback(1,error3, sender=owner);
         error_integral3 = controller.error_integral(1);
 
         assert error_integral3, error_integral2 + error3
@@ -265,11 +250,10 @@ class TestRewardController:
 
         error = relative_error(int(1.01E18), 10**27);
         assert error == -10 **25;
-        controller.test_update(1,error, sender=owner);
+        controller.test_update_feedback(1,error, sender=owner);
         # TODO use events
-        #(update_time, pi_output, p_output, i_output) = controller.last_update(1)
-        #assert pi_output ==  controller.output_lower_bound()
-        #assert p_output == controller.kp() * error//10**18
+        last_output = controller.last_output(1)
+        assert last_output ==  controller.output_lower_bound()
 
     def test_get_next_error_integral(self, owner, controller, chain):
         update_delay = 3600
@@ -282,7 +266,7 @@ class TestRewardController:
         assert new_area == error
 
         #update
-        controller.test_update(1,error, sender=owner);
+        controller.test_update_feedback(1,error, sender=owner);
         assert controller.error_integral(1) == error
 
         chain.mine(update_delay//2)#, timestamp=chain.pending_timestamp+update_delay)
@@ -294,7 +278,7 @@ class TestRewardController:
         assert new_integral == error + error
         assert new_area == error
         #update
-        controller.test_update(1,error, sender=owner);
+        controller.test_update_feedback(1,error, sender=owner);
         # TODO use events
         #assert controller.last_update_time(1) == next_pending_ts
         assert controller.error_integral(1) == new_integral
@@ -305,7 +289,7 @@ class TestRewardController:
         (new_integral, new_area) = controller.get_new_error_integral(1, error);
         assert new_integral == 3*error
         assert new_area == error
-        controller.test_update(1,error, sender=owner);
+        controller.test_update_feedback(1,error, sender=owner);
         assert controller.error_integral(1)  == 3*error
 
     def test_last_error(self, owner, controller, chain):
@@ -313,36 +297,35 @@ class TestRewardController:
 
         error = relative_error(int(1.01E18), 10**27);
         assertEq(error, -10**25);
-        controller.test_update(1,error, sender=owner);
+        controller.test_update_feedback(1,error, sender=owner);
 
         chain.pending_timestamp += update_delay
 
         error = relative_error(int(1.02E18), 10**27);
         assertEq(error, -10**25 * 2);
-        controller.test_update(1,error, sender=owner);
+        controller.test_update_feedback(1,error, sender=owner);
 
     def test_lower_bound_limit(self, owner, controller, chain):
         chain.pending_timestamp += update_delay
         # create very large error
         huge_error = controller.error(1800*10**18, 1*10**18)
-        (pi_output, p_output, i_output) = controller.get_new_pi_output(1,huge_error);
+        pi_output = controller.get_new_pi_output(1,huge_error);
 
         assert pi_output == controller.output_lower_bound()
 
-        controller.test_update(1,huge_error, sender=owner);
+        controller.test_update_feedback(1,huge_error, sender=owner);
         # TODO use events
-        #(update_time, pi_output, p_output, i_output) = controller.last_update(1)
 
         assert pi_output == controller.output_lower_bound()
 
     def test_upper_bound_limit(self, owner, controller, chain):
         controller.modify_parameters_control_output("kp", int(100e18), sender=owner);
         error = relative_error(1, 10**27);
-        (pi_output, p_output, i_output) = controller.get_new_pi_output(1, error);
+        pi_output = controller.get_new_pi_output(1, error);
 
         assert pi_output == controller.output_upper_bound()
 
-        controller.test_update(1, error, sender=owner);
+        controller.test_update_feedback(1, error, sender=owner);
         # TODO use events
         #(update_time, pi_output, p_output, i_output) = controller.last_update(1)
         #assertEq(pi_output, controller.output_upper_bound());
@@ -350,17 +333,13 @@ class TestRewardController:
     def test_raw_output_proportional_calculation(self, owner, controller, chain):
         error = controller.error(1000*10**18, 999*10**18)
         (new_integral, new_area) = controller.get_new_error_integral(1, error);
-        (pi_output, p_output, i_output) = controller.get_raw_pi_output(error, 0);
+        pi_output = controller.get_raw_pi_output(error, 0);
         assert pi_output == params.kp * error//10**18 + controller.control_output().co_bias
-        assert p_output == params.kp * error//10**18
-        assert i_output == 0
         
         error = controller.error(960*10**18, 999*10**18)
         (new_integral, new_area) = controller.get_new_error_integral(1, error);
-        (pi_output, p_output, i_output) = controller.get_raw_pi_output(error, 0);
+        pi_output = controller.get_raw_pi_output(error, 0);
         assert pi_output == params.kp * error//10**18 + controller.control_output().co_bias
-        assert p_output == params.kp * error//10**18
-        assert i_output == 0
 
     def test_both_gains_zero(self, owner, controller, chain):
         controller.modify_parameters_control_output("kp", 0, sender=owner);
@@ -369,9 +348,8 @@ class TestRewardController:
 
         error = controller.error(1000*10**18, 999*10**18)
 
-        (pi_output, p_output, _) = controller.get_new_pi_output(1,error);
+        pi_output = controller.get_new_pi_output(1,error);
         assert pi_output == 0 + controller.control_output().co_bias
-        assert p_output == 0
         assert controller.error_integral(1) == 0
 
     def test_lower_clamping(self, owner, controller, chain):
@@ -384,7 +362,7 @@ class TestRewardController:
         assert error > 0
 
         # First error: small, output doesn't hit lower bound
-        controller.test_update(1,error, sender=owner);
+        controller.test_update_feedback(1,error, sender=owner);
         # TODO use events
         #(_, pi_output, _, _) = controller.last_update(1)
         #assert pi_output < controller.control_output().co_bias
@@ -399,7 +377,7 @@ class TestRewardController:
         assert new_area == error
 
         # Second error: small, output doesn't hit lower bound
-        controller.test_update(1,error, sender=owner);
+        controller.test_update_feedback(1,error, sender=owner);
         # TODO use events
         #(_, pi_output2, _, _) = controller.last_update(1)
         #assert pi_output2 < pi_output;
@@ -417,7 +395,7 @@ class TestRewardController:
         assert new_area == huge_error
         assert new_integral == error * 2 + huge_error
 
-        controller.test_update(1,huge_error, sender=owner);
+        controller.test_update_feedback(1,huge_error, sender=owner);
         # TODO use events
         #(_, pi_output3, _, _) = controller.last_update(1)
         #assert pi_output3 == controller.output_lower_bound()
@@ -429,7 +407,7 @@ class TestRewardController:
         chain.pending_timestamp += update_delay
 
         # Integral *does* accumulate with a smaller error(doesn't hit output bound)
-        controller.test_update(1,error, sender=owner);
+        controller.test_update_feedback(1,error, sender=owner);
         # TODO use events
         #(_, pi_output4, _, _) = controller.last_update(1)
         assert controller.error_integral(1) > clamped_integral;
@@ -445,7 +423,7 @@ class TestRewardController:
         assert error < 0
 
         # First error: small, output doesn't hit upper bound
-        controller.test_update(1,error, sender=owner);
+        controller.test_update_feedback(1,error, sender=owner);
         # TODO use events
         #(_, pi_output, _, _) = controller.last_update(1)
         #assert pi_output > controller.control_output().co_bias
@@ -460,7 +438,7 @@ class TestRewardController:
         assert new_area == error
 
         # Second error: small, output doesn't hit lower bound
-        controller.test_update(1,error, sender=owner);
+        controller.test_update_feedback(1,error, sender=owner);
         # TODO use events
         #(_, pi_output2, _, _) = controller.last_update(1)
         #assert pi_output2 > pi_output;
@@ -479,7 +457,7 @@ class TestRewardController:
         assert new_area == huge_error
         assert new_integral == error * 2 + huge_error
 
-        controller.test_update(1,huge_error, sender=owner);
+        controller.test_update_feedback(1,huge_error, sender=owner);
         # TODO use events
         #(_, pi_output3, _, _) = controller.last_update(1)
         #assert pi_output3 == controller.output_upper_bound()
@@ -491,7 +469,7 @@ class TestRewardController:
         chain.pending_timestamp += update_delay
 
         # Integral *does* accumulate with a smaller error(doesn't hit output bound)
-        controller.test_update(1,error, sender=owner);
+        controller.test_update_feedback(1,error, sender=owner);
         # TODO use events
         #(_, pi_output4, _, _) = controller.last_update(1)
         #assert controller.error_integral(1) < clamped_integral;
@@ -500,32 +478,26 @@ class TestRewardController:
     def test_bounded_output_proportional_calculation(self, owner, controller, chain):
         # small error
         error = controller.error(1800*10**18, 1801*10**18)
-        (pi_output, p_output, i_output) = controller.get_raw_pi_output(error, 0);
+        pi_output = controller.get_raw_pi_output(error, 0);
         bounded_output = controller.bound_pi_output(pi_output);
 
         assert pi_output == controller.control_output().kp * error//10**18 + controller.control_output().co_bias
-        assert p_output == controller.control_output().kp * error//10**18
-        assert i_output == 0
         assert bounded_output == pi_output
 
         # large negative error, hits upper bound
         huge_error = controller.error(1800*10**18, 100000*10**18)
-        (pi_output, p_output, i_output) = controller.get_raw_pi_output(huge_error, 0);
+        pi_output = controller.get_raw_pi_output(huge_error, 0);
         bounded_output = controller.bound_pi_output(pi_output);
 
         assert pi_output == controller.control_output().kp * huge_error//10**18 + controller.control_output().co_bias
-        assert p_output == controller.control_output().kp * huge_error//10**18
-        assert i_output == 0
         assert bounded_output == controller.output_upper_bound()
 
         # large pos error, hits lower bound
         huge_error = controller.error(1000000*10**18, 1800*10**18)
-        (pi_output, p_output, i_output) = controller.get_raw_pi_output(huge_error, 0);
+        pi_output = controller.get_raw_pi_output(huge_error, 0);
         bounded_output = controller.bound_pi_output(pi_output);
 
         assert pi_output == controller.control_output().kp * huge_error//10**18 + controller.control_output().co_bias
-        assert p_output == controller.control_output().kp * huge_error//10**18
-        assert i_output == 0
         assert bounded_output == controller.output_lower_bound()
 
     def test_last_error_integral(self, owner, controller, chain):
@@ -533,78 +505,54 @@ class TestRewardController:
         chain.pending_timestamp += update_delay
 
         error = controller.error(1800*10**18, 1700*10**18)
-        controller.test_update(1,error, sender=owner);
+        controller.test_update_feedback(1,error, sender=owner);
         # TODO use events
-        #(_, pi_output, p_output, i_output) = controller.last_update(1)
         assert controller.error_integral(1) == error
 
         chain.pending_timestamp += update_delay
 
-        controller.test_update(1,error, sender=owner);
+        controller.test_update_feedback(1,error, sender=owner);
         # TODO use events
-        #(_, pi_output, p_output, i_output) = controller.last_update(1)
         assert controller.error_integral(1) == error + error
 
         chain.pending_timestamp += update_delay
         assert controller.error_integral(1) == error + error
 
-        controller.test_update(1,error, sender=owner);
+        controller.test_update_feedback(1,error, sender=owner);
         assert controller.error_integral(1) == error * 3
 
         chain.pending_timestamp += update_delay
         assert controller.error_integral(1) == error * 3
 
-        controller.test_update(1,error, sender=owner);
+        controller.test_update_feedback(1,error, sender=owner);
         assert controller.error_integral(1) == error * 4
     # END CONTROL TESTING
 
     # START REWARD TESTING
     def test_set_scale(self, owner, controller, chain):
-        controller.set_scale(1, 3*10**15, sender=owner)
-        assert controller.scales(1) == 3*10**15
+        controller.set_scale(2, 1, 3*10**15, sender=owner)
+        assert controller.get_scale(2, 1) == 3*10**15
 
-        controller.set_scale(10, 10000, sender=owner)
-        assert controller.scales(10) == 10000
+        controller.set_scale(2, 10, 10000, sender=owner)
+        assert controller.get_scale(2, 10) == 10000
 
-        controller.set_scale(10, 20000, sender=owner)
-        assert controller.scales(10) == 20000
-        assert controller.scales(1) == 3*10**15
+        controller.set_scale(2, 10, 20000, sender=owner)
+        assert controller.get_scale(2, 10) == 20000
+        assert controller.get_scale(2, 1) == 3*10**15
 
     def test_set_scales(self, owner, controller, chain):
-        controller.set_scales([(1, 3*10**15), (10, 10000)], sender=owner)
-        assert controller.scales(1) == 3*10**15
-        assert controller.scales(10) == 10000
+        controller.set_scales([(2, 1, 3*10**15), (3, 10, 10000)], sender=owner)
+        assert controller.get_scale(2, 1) == 3*10**15
+        assert controller.get_scale(3, 10) == 10000
 
-        controller.set_scales([(1, 30*10**15), (10, 10000)], sender=owner)
-        assert controller.scales(1) == 30*10**15
-        assert controller.scales(10) == 10000
-        controller.set_scales([(4, 40*10**15), (11, 11000)], sender=owner)
-        assert controller.scales(1) == 30*10**15
-        assert controller.scales(10) == 10000
-        assert controller.scales(4) == 40*10**15
-        assert controller.scales(11) == 11000
-
-    def test_get_average(self, owner, controller, chain):
-        assert controller.get_average(1) == 0
-
-    def _test_add_value(self, owner, controller, chain):
-        controller.test_add_value(1, 5, sender=owner);
-        assert controller.get_average(1) == 5
-        controller.test_add_value(1, 7, sender=owner);
-        assert controller.get_average(1) == 6
-
-        assert controller.get_average(2) == 0
-
-    def _test_add_value_overflow(self, owner, controller, chain):
-        assert controller.get_window_size(1) != 0
-        for _ in range(controller.get_window_size(1)):
-            controller.test_add_value(1, 5, sender=owner);
-
-        assert controller.get_average(1) == 5
-
-        controller.test_add_value(1, 10, sender=owner);
-
-        assert controller.get_average(1) == ((controller.get_window_size(1)- 1)*5 + 10) // controller.get_window_size(1)
+        controller.set_scales([(10, 1, 30*10**15), (20, 10, 10000)], sender=owner)
+        assert controller.get_scale(10, 1) == 30*10**15
+        assert controller.get_scale(20, 10) == 10000
+        controller.set_scales([(1, 4, 40*10**15), (4, 11, 11000)], sender=owner)
+        assert controller.get_scale(10, 1) == 30*10**15
+        assert controller.get_scale(20, 10) == 10000
+        assert controller.get_scale(1, 4) == 40*10**15
+        assert controller.get_scale(4, 11) == 11000
 
     def test_time_reward(self, owner, controller, chain):
         assert controller.calc_time_reward(0) == controller.min_time_reward()
@@ -642,14 +590,14 @@ class TestRewardController:
         assert abs(sum(controller.calc_reward(params.max_ts, params.min_deviation)) - params.max_reward//2) < params.max_reward/100
         assert abs(sum(controller.calc_reward(params.min_ts, params.max_deviation)) - params.max_reward//2) < params.max_reward/100
 
-    def test_update(self, owner, controller, oracle, chain):
+    def test_update_feedback(self, owner, controller, oracle, chain):
         # fast forward to get maximum time since last oracle update
         chain.mine(1, timestamp = chain.pending_timestamp + 1*2)
 
         update_interval = 100 * 10**18
         target_time = 1800 * 10**18
         error = (update_interval - params.target_time_since) * 10**18 // update_interval
-        res = controller.test_update(1, error, sender=owner)
+        res = controller.test_update_feedback(1, error, sender=owner)
         assert not res.failed
         # TODO events
         #output = controller.last_output(1)
@@ -713,7 +661,7 @@ class TestRewardController:
 
     def test_update_oracle(self, owner, controller, oracle, chain):
         n = 10
-        scales = [(1, 10**18)]
+        scales = [(2, 1, 10**18)]
         controller.set_scales(scales, sender=owner)
 
         sid = 2
@@ -734,18 +682,6 @@ class TestRewardController:
             tx = controller.update_many(a, sender=owner)
 
     def test_update_many_multi(self, owner, controller, oracle, chain):
-        n = 1
-        scales = [(i+1, (i+1)*10**18) for i in range(n)]
-        controller.set_scales(scales, sender=owner)
-
-        print("Values before")
-        for i in range(n):
-            bf_value, bf_height, bf_ts = oracle.get(2, i+1, 107)
-            tip_value, tip_height, tip_ts = oracle.get(2, i+1, 322)
-            print(f"{i=}, {bf_value=}, {bf_height=}, {bf_ts=}")
-            print(f"{i=}, {tip_value=}, {tip_height=}, {tip_ts=}")
-
-        from addresses import oracle_addresses, gasnet_contract
         GASNET_ORACLE = gasnet_contract
         GASNET_RPC = 'https://rpc.gas.network'
 
@@ -758,10 +694,12 @@ class TestRewardController:
 
         sid = 2
         cid_1 = 1
-        cid_2 = 1
+        cid_2 = 10
         basefee_typ = 107
         tip_typ = 322
 
+        controller.set_scale(sid, cid_1, 10**15, sender=owner)
+        controller.set_scale(sid, cid_2, 10**15, sender=owner)
         # read gasnet
         a: bytes = oracle_gasnet.functions.getValues(sid, cid_1).call()
         b: bytes = oracle_gasnet.functions.getValues(sid, cid_2).call()
@@ -769,30 +707,8 @@ class TestRewardController:
 
         rewards = controller.update_many.call(new_payload)
 
-        #print(f"{rewards=}")
-
-        """
-        # ensure first n time and dev rewards are non-zero
-        for i, (time_reward, dev_reward) in enumerate(rewards):
-            if i == n:
-                break
-            assert time_reward != 0
-            assert dev_reward != 0
-            
-        """
-
         tx = controller.update_many(new_payload, raise_on_revert=True, sender=owner)
-        tx.show_trace(True)
-        #tx = controller.update_oracle(payload, raise_on_revert=True, sender=owner)
-        tx.show_trace(True)
-        assert len(tx.events) == n
-
-        print("Values after first update")
-        for i in range(n):
-            bf_value, bf_height, bf_ts = oracle.get(2, i+1, 107)
-            tip_value, tip_height, tip_ts = oracle.get(2, i+1, 322)
-            print(f"{i=}, {bf_value=}, {bf_height=}, {bf_ts=}")
-            print(f"{i=}, {tip_value=}, {tip_height=}, {tip_ts=}")
+        assert len(tx.events) == 2
 
         print("first update")
         for e in tx.events:
@@ -804,13 +720,8 @@ class TestRewardController:
         # no update
         assert len(tx.events) == 0
 
-        print("Values after first update")
-        for i in range(n):
-            bf_value, bf_height, bf_ts = oracle.get(2, i+1, 107)
-            tip_value, tip_height, tip_ts = oracle.get(2, i+1, 322)
-
     def test_get_updaters_chunk(self, owner, controller, oracle, chain):
-        scales = [(1, 10**18)]
+        scales = [(2, 1, 10**18)]
         controller.set_scales(scales, sender=owner)
 
         n_updaters = 10
@@ -857,7 +768,7 @@ class TestRewardController:
 
     def test_update_many_multi_sig(self, owner, controller, oracle, chain):
         n = 3
-        scales = [(i+1, (i+1)*10**18) for i in range(n)]
+        scales = [(2, i+1, (i+1)*10**18) for i in range(n)]
         controller.set_scales(scales, sender=owner)
 
         print("Values before")
@@ -937,7 +848,7 @@ class TestRewardController:
     def test_update_many_partial_update(self, owner, controller, oracle, chain):
         # not all estimates update
         n = 3
-        scales = [(i+1, (i+1)*10**18) for i in range(n)]
+        scales = [(2, i+1, (i+1)*10**18) for i in range(n)]
         controller.set_scales(scales, sender=owner)
 
         ts = int(time.time() * 1000)
@@ -1048,7 +959,7 @@ class TestRewardController:
 
     def test_update_many_w_dupes(self, owner, controller, oracle, chain):
         n = 5
-        scales = [(i+1, (i+1)*10**18) for i in range(n)]
+        scales = [(2, i+1, (i+1)*10**18) for i in range(n)]
         controller.set_scales(scales, sender=owner)
 
         # constant cid, time and height for all payloads
@@ -1247,29 +1158,31 @@ class TestRewardController:
         print(f"{rewards_after_e=}")
 
     def test_calc_deviation(self, owner, controller):
-        controller.set_scale(1, 3*10**15, sender=owner)
-        assert controller.calc_deviation(1, 10*10**15, 1*10**15) == 3*10**18
-        assert controller.calc_deviation(1, 1*10**15, 10*10**15) == 3*10**18
-        assert controller.calc_deviation(1, 1*10**15, 4*10**15) == 1*10**18
-        assert controller.calc_deviation(1, 4*10**15, 1*10**15) == 1*10**18
-        assert controller.calc_deviation(1, 5*10**15, 5*10**15) == 0
+        controller.set_scale(2, 1, 3*10**15, sender=owner)
+        scid = (1 << 8) | 2
+        # how many IQRs is 
+        assert controller.calc_deviation(scid, 10*10**15, 1*10**15) == 3*10**18
+        assert controller.calc_deviation(scid, 1*10**15, 10*10**15) == 3*10**18
+        assert controller.calc_deviation(scid, 1*10**15, 4*10**15) == 1*10**18
+        assert controller.calc_deviation(scid, 4*10**15, 1*10**15) == 1*10**18
+        assert controller.calc_deviation(scid, 5*10**15, 5*10**15) == 0
 
         #zero scale should revert
         with pytest.raises(Exception):
-            controller.set_scale(1, 0, sender=owner)
+            controller.set_scale(2, 1, 0, sender=owner)
             controller.calc_deviation(1, 10*10**15, 1*10**15)
 
 
-    def test_update_ema(self, owner, controller):
+    def test_update_interval_ema(self, owner, controller):
         vals = [random.randint(600 * 10**18, 30000 * 10**18) for _ in range(100)]
         data = []
         means = []
         emas = []
         for v in vals:
-            controller.test_update_ema(1, v, sender=owner)
+            controller.test_update_interval_ema(1, v, sender=owner)
             data.append(v)
             means.append(np.mean(data[-10:])/10**18)
-            emas.append(controller.ema(1)/10**18)
+            emas.append(controller.interval_ema(1)/10**18)
 
 
         # Uncomment to see comparative plot

@@ -28,7 +28,7 @@ def deploy(params, chain_id, owner, project):
 
 def main():
     chain_id = 84532 # base sepolia
-    #chain_id = 11155111 # sepolia
+    chain_id = 11155111 # sepolia
     account = accounts.load("blocknative_dev")
     controller = deploy(params, chain_id, account, project)
     print(f"{controller.address=}")
