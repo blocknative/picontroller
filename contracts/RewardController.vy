@@ -21,8 +21,8 @@ event OracleUpdated:
     system_id: uint8
     chain_id: uint64
     new_value: uint240
-    deviation: uint256
-    time_since: uint256
+    raw_deviation: uint240
+    time_since: uint48
     time_reward: uint256
     deviation_reward: uint256
     reward_mult: int256
@@ -302,21 +302,17 @@ def _error(target: int256, measured: int256) -> int256:
 
 @external
 @view
-def calc_deviation(scid: uint72, new_value: uint256, current_value: uint256) -> uint256:
-    return self._calc_deviation(scid, new_value, current_value)
+def calc_deviation(scid: uint72, value_diff: uint256) -> uint256:
+    return self._calc_deviation(scid, value_diff)
 
 @internal
 @view
-def _calc_deviation(scid: uint72, new_value: uint256, current_value: uint256) -> uint256:
+def _calc_deviation(scid: uint72, value_diff: uint256) -> uint256:
     # calculates how many scales the new_value has deviated from current_value
     target_scale: uint256 = self.scales[scid]
     assert target_scale != 0, "unknown scid"
 
-    # sign doesn't matter, take abs value
-    if new_value > current_value:
-        return (new_value - current_value)*EIGHTEEN_DECIMAL_NUMBER_U//target_scale
-    else:
-        return (current_value - new_value)*EIGHTEEN_DECIMAL_NUMBER_U//target_scale
+    return value_diff*EIGHTEEN_DECIMAL_NUMBER_U//target_scale
 
 @internal
 def _calc_reward_mult(scid: uint72, time_since: uint256) -> int256:
@@ -453,10 +449,15 @@ def update_many(dat: Bytes[MAX_PAYLOAD_SIZE]) -> DynArray[EnhancedReward, MAX_PA
 
         scid = convert(shift(convert(rec.cid, uint256), 8) | convert(sid, uint256), uint72)
 
-        # calculate deviation and staleness(time_since) for new values
+        # raw deviation is used in event
+        raw_deviation: uint240 = 0
+        if new_gasprice > old_gasprice:
+            raw_deviation = new_gasprice - old_gasprice
+        else:
+            raw_deviation = old_gasprice - new_gasprice
 
-        deviation = self._calc_deviation(scid, convert(new_gasprice, uint256), convert(old_gasprice, uint256))
-
+        # deviation and time_since are used to calculate rewards
+        deviation = self._calc_deviation(scid, convert(raw_deviation, uint256))
         time_since = convert(rec.new_timestamp - rec.old_timestamp, uint256) * EIGHTEEN_DECIMAL_NUMBER_U
 
         # calculate reward
@@ -479,7 +480,8 @@ def update_many(dat: Bytes[MAX_PAYLOAD_SIZE]) -> DynArray[EnhancedReward, MAX_PA
         self.total_rewards += time_reward_adj_u + deviation_reward_adj_u
 
         log OracleUpdated(updater=msg.sender, system_id=sid, chain_id=cid,
-                          new_value=new_gasprice, deviation=deviation, time_since=time_since,
+                          new_value=new_gasprice, raw_deviation=raw_deviation,
+                          time_since=convert(time_since//10**21, uint48),
                           time_reward=time_reward_adj_u, deviation_reward=deviation_reward_adj_u,
                           reward_mult=reward_mult)
 
@@ -527,9 +529,9 @@ def _calc_deviation_reward(deviation: int256, coeff: Coefficients) -> int256:
 def _calc_reward(time_since: int256, deviation: int256, coeff: Coefficients) -> (int256, int256):
     return self._calc_time_reward(time_since, coeff), self._calc_deviation_reward(deviation, coeff)
 
-#@external
-#def test_update_interval_ema(scid: uint72, new_value: uint256) -> uint256:
-#    return self._update_interval_ema(scid, new_value)
+@external
+def test_update_interval_ema(scid: uint72, new_value: uint256) -> uint256:
+    return self._update_interval_ema(scid, new_value)
 
 @internal
 def _update_interval_ema(scid: uint72, new_value: uint256) -> uint256:
@@ -538,9 +540,9 @@ def _update_interval_ema(scid: uint72, new_value: uint256) -> uint256:
     self.interval_ema[scid] = new_ema
     return new_ema
 
-#@external
-#def test_update_feedback(scid: uint72, error: int256) -> int256:
-#    return self._update_feedback(scid, error)
+@external
+def test_update_feedback(scid: uint72, error: int256) -> int256:
+    return self._update_feedback(scid, error)
 
 @internal
 def _update_feedback(scid: uint72, error: int256) -> int256:

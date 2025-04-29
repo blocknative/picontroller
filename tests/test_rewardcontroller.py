@@ -1161,16 +1161,16 @@ class TestRewardController:
         controller.set_scale(2, 1, 3*10**15, sender=owner)
         scid = (1 << 8) | 2
         # how many IQRs is 
-        assert controller.calc_deviation(scid, 10*10**15, 1*10**15) == 3*10**18
-        assert controller.calc_deviation(scid, 1*10**15, 10*10**15) == 3*10**18
-        assert controller.calc_deviation(scid, 1*10**15, 4*10**15) == 1*10**18
-        assert controller.calc_deviation(scid, 4*10**15, 1*10**15) == 1*10**18
-        assert controller.calc_deviation(scid, 5*10**15, 5*10**15) == 0
+        assert controller.calc_deviation(scid, abs(10*10**15 - 1*10**15)) == 3*10**18
+        assert controller.calc_deviation(scid, abs(1*10**15 - 10*10**15)) == 3*10**18
+        assert controller.calc_deviation(scid, abs(1*10**15 - 4*10**15)) == 1*10**18
+        assert controller.calc_deviation(scid, abs(4*10**15 - 1*10**15)) == 1*10**18
+        assert controller.calc_deviation(scid, abs(5*10**15 - 5*10**15)) == 0
 
         #zero scale should revert
         with pytest.raises(Exception):
             controller.set_scale(2, 1, 0, sender=owner)
-            controller.calc_deviation(1, 10*10**15, 1*10**15)
+            controller.calc_deviation(1, abs(10*10**15 - 1*10**15))
 
 
     def test_update_interval_ema(self, owner, controller):
