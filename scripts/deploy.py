@@ -21,14 +21,24 @@ def deploy(params, chain_id, owner, project):
             params.default_window_size,
             oracle_addresses[chain_id],
             params.coeff,
-            publish=True,
+            publish=False,
             sender=owner)
 
     return controller
 
+def set_scales(account, controller, params):
+    scales = [(x[0][0], x[0][1], x[1]) for x in list(zip(params.scales.keys(), params.scales.values()))]
+    controller.set_scales(scales, sender=account)
+    for s in scales:
+        print(s)
+
 def main():
-    chain_id = 84532 # base sepolia
-    chain_id = 11155111 # sepolia
+    #chain_id = 84532 # base sepolia
+    #chain_id = 11155111 # sepolia
     account = accounts.load("blocknative_dev")
-    controller = deploy(params, chain_id, account, project)
+    print("Deploying to {chain.chain_id=}")
+    controller = deploy(params, chain.chain_id, account, project)
     print(f"{controller.address=}")
+    print("Setting scales")
+    set_scales(account, controller, params)
+    
