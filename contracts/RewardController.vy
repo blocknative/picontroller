@@ -3,7 +3,7 @@
 
 interface IOracle:
     def get(systemid: uint8, cid: uint64, typ: uint16) -> (uint256, uint64, uint48): view
-    def storeValuesWithReceipt(dat: Bytes[MAX_PAYLOAD_SIZE]) -> DynArray[RecordReceipt, MAX_PAYLOADS]: nonpayable
+    def storeValuesWithReceipt(dat: Bytes[MAX_PAYLOAD_SIZE]) -> DynArray[RecordReceipt, MAX_PAYLOADS]: payable
 
 struct RecordReceipt:
     systemid: uint8
@@ -26,6 +26,9 @@ event OracleUpdated:
     time_reward: uint256
     deviation_reward: uint256
     reward_mult: int256
+
+event RewardsStatus:
+    block_: address
 
 struct Scale:
     system_id: uint8
@@ -61,7 +64,7 @@ EIGHTEEN_DECIMAL_NUMBER_U: constant(uint256) = 10**18
 
 BASEFEE_REWARD_TYPE: public(constant(uint16)) = 107
 MAX_PAYLOADS: public(constant(uint256)) = 32
-MAX_UPDATERS: public(constant(uint32)) = 2**16
+MAX_UPDATERS: public(constant(uint32)) = 2**18
 MAX_PAYLOAD_SIZE: public(constant(uint256)) = 16384
 EMA_ALPHA: public(constant(uint256)) = 818181818181818176 # 1 - 2/11
 ALPHA_COMP: constant(uint256) = EIGHTEEN_DECIMAL_NUMBER_U - EMA_ALPHA
@@ -83,9 +86,14 @@ min_deviation_reward: public(int256)
 max_deviation_reward: public(int256)
 min_window_size: public(uint32)
 has_updated: public(HashMap[address, bool])
-updaters: public(address[MAX_UPDATERS])
+updaters: address[MAX_UPDATERS]
 n_updaters:  public(uint32)
+
+# if frozen, don't allow any updates
 frozen: public(bool)
+
+# if rewards_off, allow updates, but w/o rewards
+rewards_enabled: public(bool)
 oracle: public(IOracle)
 
 error_integral: public(HashMap[uint72, int256])
@@ -169,6 +177,16 @@ def freeze():
 def unfreeze():
     assert self.authorities[msg.sender]
     self.frozen = False
+
+@external
+def enable_rewards():
+    assert self.authorities[msg.sender]
+    self.rewards_enabled = True
+
+@external
+def disable_rewards():
+    assert self.authorities[msg.sender]
+    self.rewards_enabled = False
 
 @external
 def modify_parameters_addr(parameter: String[32], addr: address):
@@ -367,10 +385,11 @@ def get_updaters_chunk(start: uint256, count: uint256) -> DynArray[TotalRewards,
     return total_rewards
 
 @external
+@payable
 def update_many(dat: Bytes[MAX_PAYLOAD_SIZE]) -> DynArray[EnhancedReward, MAX_PAYLOADS]:
     assert not self.frozen, "Rewards contract is frozen"
 
-    receipts: DynArray[RecordReceipt, MAX_PAYLOADS] = extcall self.oracle.storeValuesWithReceipt(dat)
+    receipts: DynArray[RecordReceipt, MAX_PAYLOADS] = extcall self.oracle.storeValuesWithReceipt(dat, value=msg.value)
     rewards: DynArray[EnhancedReward, MAX_PAYLOADS] = []
 
     tip_reward_type: uint16 = self.tip_reward_type
@@ -445,6 +464,7 @@ def update_many(dat: Bytes[MAX_PAYLOAD_SIZE]) -> DynArray[EnhancedReward, MAX_PA
                                           deviation_reward=0))
             continue
 
+
         new_gasprice = new_tip_val + new_bf_val
 
         scid = convert(shift(convert(rec.cid, uint256), 8) | convert(sid, uint256), uint72)
@@ -460,37 +480,54 @@ def update_many(dat: Bytes[MAX_PAYLOAD_SIZE]) -> DynArray[EnhancedReward, MAX_PA
         deviation = self._calc_deviation(scid, convert(raw_deviation, uint256))
         time_since = convert(rec.new_timestamp - rec.old_timestamp, uint256) * EIGHTEEN_DECIMAL_NUMBER_U
 
-        # calculate reward
-        time_reward, deviation_reward = self._calc_reward(convert(time_since, int256)//1000,
-                                                          convert(deviation, int256),
-                                                          coeff)
-     
-        # calculate reward multiplier
-        reward_mult = self._calc_reward_mult(scid, time_since//1000)
+        # Dont reward
+        if not self.rewards_enabled:
+            log OracleUpdated(updater=msg.sender, system_id=sid, chain_id=cid,
+                              new_value=new_gasprice, raw_deviation=raw_deviation,
+                              time_since=convert(time_since//10**21, uint48),
+                              time_reward=0, deviation_reward=0,
+                              reward_mult=0)
 
-        # adjust rewards with multiplier
-        time_reward_adj = reward_mult * time_reward // EIGHTEEN_DECIMAL_NUMBER
-        deviation_reward_adj = reward_mult * deviation_reward // EIGHTEEN_DECIMAL_NUMBER
+            rewards.append(EnhancedReward(system_id=sid,
+                                          chain_id=cid,
+                                          height=rec.old_height,
+                                          gas_price=old_gasprice,
+                                          time_reward=0,
+                                          deviation_reward=0))
+            continue
+        else:
 
-        time_reward_adj_u = convert(time_reward_adj, uint256)
-        deviation_reward_adj_u = convert(deviation_reward_adj, uint256)
+            # calculate reward
+            time_reward, deviation_reward = self._calc_reward(convert(time_since, int256)//1000,
+                                                              convert(deviation, int256),
+                                                              coeff)
+         
+            # calculate reward multiplier
+            reward_mult = self._calc_reward_mult(scid, time_since//1000)
 
-        # store rewards
-        self.rewards[msg.sender] += time_reward_adj_u + deviation_reward_adj_u
-        self.total_rewards += time_reward_adj_u + deviation_reward_adj_u
+            # adjust rewards with multiplier
+            time_reward_adj = reward_mult * time_reward // EIGHTEEN_DECIMAL_NUMBER
+            deviation_reward_adj = reward_mult * deviation_reward // EIGHTEEN_DECIMAL_NUMBER
 
-        log OracleUpdated(updater=msg.sender, system_id=sid, chain_id=cid,
-                          new_value=new_gasprice, raw_deviation=raw_deviation,
-                          time_since=convert(time_since//10**21, uint48),
-                          time_reward=time_reward_adj_u, deviation_reward=deviation_reward_adj_u,
-                          reward_mult=reward_mult)
+            time_reward_adj_u = convert(time_reward_adj, uint256)
+            deviation_reward_adj_u = convert(deviation_reward_adj, uint256)
 
-        rewards.append(EnhancedReward(system_id=sid,
-                                      chain_id=cid,
-                                      height=rec.old_height,
-                                      gas_price=old_gasprice,
-                                      time_reward=time_reward_adj_u,
-                                      deviation_reward=deviation_reward_adj_u))
+            # store rewards
+            self.rewards[msg.sender] += time_reward_adj_u + deviation_reward_adj_u
+            self.total_rewards += time_reward_adj_u + deviation_reward_adj_u
+
+            log OracleUpdated(updater=msg.sender, system_id=sid, chain_id=cid,
+                              new_value=new_gasprice, raw_deviation=raw_deviation,
+                              time_since=convert(time_since//10**21, uint48),
+                              time_reward=time_reward_adj_u, deviation_reward=deviation_reward_adj_u,
+                              reward_mult=reward_mult)
+
+            rewards.append(EnhancedReward(system_id=sid,
+                                          chain_id=cid,
+                                          height=rec.old_height,
+                                          gas_price=old_gasprice,
+                                          time_reward=time_reward_adj_u,
+                                          deviation_reward=deviation_reward_adj_u))
 
     return rewards
 

@@ -10,10 +10,13 @@ SEPOLIA_ORACLE = oracle_addresses[11155111]
 @pytest.fixture
 def oracle(owner, project):
     oracle = owner.deploy(project.Oracle, sender=owner)
+
     # assign owner so we can create payloads
     oracle.setSignerAddress(owner.address, sender=owner)
+
     # assign gasnet signer so we can use gasnet payloads
     oracle.setSignerAddress("0x26222b1a8C061f7Ebda1f4a4d15A66683260dBE5", sender=owner)
+
     return oracle
 
 @pytest.fixture

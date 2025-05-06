@@ -30,12 +30,6 @@ update_delay = 3600;
 def assertEq(x, y):
     assert x == y
 
-def assertGt(x, y):
-    assert x > y
-
-def assertLt(x, y):
-    assert x < y
-
 def relative_error(measured_value, reference_value):
     # measured_value is WAD, reference_value is a RAY
     assert isinstance(measured_value, int)
@@ -157,7 +151,6 @@ class TestRewardController:
         next_ts = chain.pending_timestamp
         controller.test_update_feedback(1,0, sender=owner)
         # TODO use events
-        #assertEq(controller.last_update_time(1), next_ts);
         assertEq(controller.error_integral(1), 0);
 
     def test_two_updates(self, owner, controller, chain):
@@ -194,7 +187,6 @@ class TestRewardController:
         assert pi_output == params.kp * error//10**18 + params.ki * error//10**18 + controller.control_output().co_bias
 
         # TODO use events
-        #assert controller.last_update_time(1) == next_ts
         assert controller.error_integral(1) == error
         assert controller.error_integral(2) == 0
 
@@ -212,9 +204,6 @@ class TestRewardController:
         assert controller.error_integral(1) == error
 
     def test_basic_integral(self, owner, controller, chain):
-        #controller.modify_parameters_int("kp", int(2.25*10**11), sender=owner);
-        #controller.modify_parameters_int("ki", int(7.2 * 10**4), sender=owner);
-
         chain.pending_timestamp += update_delay
 
         error1 = controller.error(1000*10**18, 999*10**18)
@@ -269,7 +258,7 @@ class TestRewardController:
         controller.test_update_feedback(1,error, sender=owner);
         assert controller.error_integral(1) == error
 
-        chain.mine(update_delay//2)#, timestamp=chain.pending_timestamp+update_delay)
+        chain.mine(update_delay//2)
         next_pending_ts = chain.pending_timestamp + update_delay
         chain.pending_timestamp = next_pending_ts
 
@@ -280,7 +269,6 @@ class TestRewardController:
         #update
         controller.test_update_feedback(1,error, sender=owner);
         # TODO use events
-        #assert controller.last_update_time(1) == next_pending_ts
         assert controller.error_integral(1) == new_integral
 
         chain.pending_timestamp += update_delay
@@ -327,8 +315,8 @@ class TestRewardController:
 
         controller.test_update_feedback(1, error, sender=owner);
         # TODO use events
-        #(update_time, pi_output, p_output, i_output) = controller.last_update(1)
-        #assertEq(pi_output, controller.output_upper_bound());
+        output = controller.last_output(1)
+        assertEq(output, controller.output_upper_bound());
 
     def test_raw_output_proportional_calculation(self, owner, controller, chain):
         error = controller.error(1000*10**18, 999*10**18)
@@ -364,9 +352,9 @@ class TestRewardController:
         # First error: small, output doesn't hit lower bound
         controller.test_update_feedback(1,error, sender=owner);
         # TODO use events
-        #(_, pi_output, _, _) = controller.last_update(1)
-        #assert pi_output < controller.control_output().co_bias
-        #assert pi_output > controller.output_lower_bound();
+        output = controller.last_output(1)
+        assert output < controller.control_output().co_bias
+        assert output > controller.output_lower_bound()
 
         assert controller.error_integral(1) == error
 
@@ -379,9 +367,9 @@ class TestRewardController:
         # Second error: small, output doesn't hit lower bound
         controller.test_update_feedback(1,error, sender=owner);
         # TODO use events
-        #(_, pi_output2, _, _) = controller.last_update(1)
-        #assert pi_output2 < pi_output;
-        #assert pi_output2 > controller.output_lower_bound();
+        output2 = controller.last_output(1)
+        assert output2 < output;
+        assert output2 > controller.output_lower_bound();
         assert controller.error_integral(1) == 2*error
 
         chain.pending_timestamp += update_delay
@@ -397,8 +385,8 @@ class TestRewardController:
 
         controller.test_update_feedback(1,huge_error, sender=owner);
         # TODO use events
-        #(_, pi_output3, _, _) = controller.last_update(1)
-        #assert pi_output3 == controller.output_lower_bound()
+        output3 = controller.last_output(1)
+        assert output3 == controller.output_lower_bound()
 
         # Integral doesn't accumulate
         clamped_integral = controller.error_integral(1)
@@ -409,9 +397,9 @@ class TestRewardController:
         # Integral *does* accumulate with a smaller error(doesn't hit output bound)
         controller.test_update_feedback(1,error, sender=owner);
         # TODO use events
-        #(_, pi_output4, _, _) = controller.last_update(1)
+        output4 = controller.last_output(1)
         assert controller.error_integral(1) > clamped_integral;
-        #assert pi_output4 > controller.output_lower_bound();
+        assert output4 > controller.output_lower_bound();
 
     def test_upper_clamping(self, owner, controller, chain):
         assert controller.control_output().kp < 0
@@ -425,9 +413,9 @@ class TestRewardController:
         # First error: small, output doesn't hit upper bound
         controller.test_update_feedback(1,error, sender=owner);
         # TODO use events
-        #(_, pi_output, _, _) = controller.last_update(1)
-        #assert pi_output > controller.control_output().co_bias
-        #assert pi_output < controller.output_upper_bound();
+        output = controller.last_output(1)
+        assert output > controller.control_output().co_bias
+        assert output < controller.output_upper_bound();
 
         assert controller.error_integral(1) == error
 
@@ -440,9 +428,9 @@ class TestRewardController:
         # Second error: small, output doesn't hit lower bound
         controller.test_update_feedback(1,error, sender=owner);
         # TODO use events
-        #(_, pi_output2, _, _) = controller.last_update(1)
-        #assert pi_output2 > pi_output;
-        #assert pi_output2 < controller.output_upper_bound();
+        output2 = controller.last_output(1)
+        assert output2 > output;
+        assert output2 < controller.output_upper_bound();
         assert controller.error_integral(1) == 2*error
 
         chain.pending_timestamp += update_delay
@@ -459,8 +447,8 @@ class TestRewardController:
 
         controller.test_update_feedback(1,huge_error, sender=owner);
         # TODO use events
-        #(_, pi_output3, _, _) = controller.last_update(1)
-        #assert pi_output3 == controller.output_upper_bound()
+        output3 = controller.last_output(1)
+        assert output3 == controller.output_upper_bound()
 
         # Integral doesn't accumulate
         clamped_integral = controller.error_integral(1)
@@ -471,9 +459,9 @@ class TestRewardController:
         # Integral *does* accumulate with a smaller error(doesn't hit output bound)
         controller.test_update_feedback(1,error, sender=owner);
         # TODO use events
-        #(_, pi_output4, _, _) = controller.last_update(1)
-        #assert controller.error_integral(1) < clamped_integral;
-        #assert pi_output4 < controller.output_upper_bound();
+        output4 = controller.last_output(1)
+        assert controller.error_integral(1) < clamped_integral;
+        assert output4 < controller.output_upper_bound();
 
     def test_bounded_output_proportional_calculation(self, owner, controller, chain):
         # small error
@@ -600,34 +588,12 @@ class TestRewardController:
         res = controller.test_update_feedback(1, error, sender=owner)
         assert not res.failed
         # TODO events
-        #output = controller.last_output(1)
-        #assert output != 0
-        #assert output != 10**18
+        output = controller.last_output(1)
+        assert output != 0
+        assert output != 10**18
 
 
     def test_freeze(self, owner, controller, oracle, chain):
-        """
-        from addresses import oracle_addresses, gasnet_contract
-        GASNET_ORACLE = gasnet_contract
-        GASNET_RPC = 'https://rpc.gas.network'
-
-        w3 = Web3(HTTPProvider(GASNET_RPC))
-
-        with open('tests/gasnet_oracle_v2.json') as f:
-            abi = json.load(f)['abi']
-
-        oracle_gasnet = w3.eth.contract(address=GASNET_ORACLE, abi=abi)
-
-        sid = 2
-        cid = 1
-        basefee_typ = 107
-        tip_typ = 322
-
-        # read gasnet
-        a: bytes = oracle_gasnet.functions.getValues(sid, cid).call()
-        """
-
-        #a += DELIMITER
 
         typ_values = {107: random.randint(1, 10**18), 199: random.randint(1, 10**18), 322: random.randint(1, 10**18)}
         ts = int(time.time() * 1000)
@@ -767,6 +733,9 @@ class TestRewardController:
         assert controller.n_updaters() == n_updaters
 
     def test_update_many_multi_sig(self, owner, controller, oracle, chain):
+        # turn rewards on
+        controller.enable_rewards(sender=owner)
+
         n = 3
         scales = [(2, i+1, (i+1)*10**18) for i in range(n)]
         controller.set_scales(scales, sender=owner)
@@ -807,19 +776,13 @@ class TestRewardController:
 
         rewards = controller.update_many.call(payload)
 
-        """
         # ensure first n time and dev rewards are non-zero
-        for i, (time_reward, dev_reward) in enumerate(rewards):
-            if i == n:
-                break
-            assert time_reward != 0
-            assert dev_reward != 0
-            
-        """
+        for i, r in enumerate(rewards):
+            assert r[4] != 0
+            assert r[5] != 0
 
         tx = controller.update_many(payload, raise_on_revert=True, sender=owner)
         tx.show_trace(True)
-        #tx = controller.update_oracle(payload, raise_on_revert=True, sender=owner)
         assert len(tx.events) == n
 
         print("Values after first update")
@@ -845,7 +808,121 @@ class TestRewardController:
             bf_value, bf_height, bf_ts = oracle.get(2, i+1, 107)
             tip_value, tip_height, tip_ts = oracle.get(2, i+1, 322)
 
+    def test_update_many_payable(self, owner, controller, oracle, chain):
+
+        assert oracle.balance == 0
+        # turn rewards on
+        controller.enable_rewards(sender=owner)
+
+        n = 3
+        scales = [(2, i+1, (i+1)*10**18) for i in range(n)]
+        controller.set_scales(scales, sender=owner)
+
+        # build multi-chain payload
+        payload = b''
+        for i in range(n):
+            typ_values = {107: random.randint(10**15, 10**18),
+                          199: random.randint(10**15, 10**18),
+                          322: random.randint(10**15, 10**18)}
+
+            ts = int(time.time() * 1000)
+            sid = 2
+            cid = i+1
+            payload_params = {
+                "plen": len(typ_values),
+                "ts": ts + i*2000,
+                "sid": sid,
+                "cid": cid,
+                "height": (i+1)*100,
+                "typ_values": typ_values
+                }
+
+            # payload + signature
+            new_payload = utils.create_signed_payload(web3=web3, signer=owner, **payload_params)
+
+            if i != 0:
+                payload += DELIMITER
+
+            payload += new_payload
+
+        amount = 2000
+        tx = controller.update_many(payload, raise_on_revert=True, sender=owner, value=amount)
+        assert len(tx.events) == n
+
+        assert oracle.balance == amount
+
+        tx = controller.update_many(payload, sender=owner, value=amount)
+
+        # no update
+        assert len(tx.events) == 0
+        assert oracle.balance == 2 * amount
+
+        # turn rewards off
+        controller.disable_rewards(sender=owner)
+        tx = controller.update_many(payload, sender=owner, value=amount)
+
+        # no update
+        assert len(tx.events) == 0
+        assert oracle.balance == 3 * amount
+
+    def test_update_many_disable_rewards(self, owner, controller, oracle, chain):
+
+        n = 3
+        scales = [(2, i+1, (i+1)*10**18) for i in range(n)]
+        controller.set_scales(scales, sender=owner)
+
+        # build multi-chain payload
+        payload = b''
+        for i in range(n):
+            typ_values = {107: random.randint(10**15, 10**18),
+                          199: random.randint(10**15, 10**18),
+                          322: random.randint(10**15, 10**18)}
+
+            ts = int(time.time() * 1000)
+            sid = 2
+            cid = i+1
+            payload_params = {
+                "plen": len(typ_values),
+                "ts": ts + i*2000,
+                "sid": sid,
+                "cid": cid,
+                "height": (i+1)*100,
+                "typ_values": typ_values
+                }
+
+            # payload + signature
+            new_payload = utils.create_signed_payload(web3=web3, signer=owner, **payload_params)
+
+            if i != 0:
+                payload += DELIMITER
+
+            payload += new_payload
+
+        rewards = controller.update_many.call(payload)
+
+        # ensure first n time and dev rewards are zero
+        for i, r in enumerate(rewards):
+            assert r[4] == 0
+            assert r[5] == 0
+
+        tx = controller.update_many(payload, raise_on_revert=True, sender=owner)
+        tx.show_trace(True)
+        assert len(tx.events) == n
+
+        print("first update")
+        for e in tx.events:
+            print(e.event_name)
+            print(e.event_arguments)
+            print(f"{e.block_number=}")
+
+        tx = controller.update_many(payload, sender=owner)
+        # no update
+        assert len(tx.events) == 0
+
     def test_update_many_partial_update(self, owner, controller, oracle, chain):
+        # turn rewards on
+        controller.enable_rewards(sender=owner)
+
         # not all estimates update
         n = 3
         scales = [(2, i+1, (i+1)*10**18) for i in range(n)]
@@ -909,39 +986,20 @@ class TestRewardController:
 
         # first update, call
         rewards = controller.update_many.call(payload)
-        #print("rewards")
-        #print(rewards)
-
-        """
-        receipts = oracle.storeValuesWithReceipt.call(payload)
-        print("receipts")
-        print(receipts)
-        """
 
         # ensure first n time and dev rewards are non-zero
         for i, r in enumerate(rewards):
-            if i == n:
-                break
             assert r[4] != 0
             assert r[5] != 0
 
         tx = controller.update_many(payload, sender=owner)
-        #oracle.storeValuesWithReceipt(payload, sender=owner)
-        #print("rewards")
 
         events = list(tx.decode_logs())
         assert len(tx.events) == n
 
-        """
-        receipts = oracle.storeValuesWithReceipt.call(payload2)
-        print("receipts2")
-        print(receipts)
-        """
 
         # second update, call
         rewards = controller.update_many.call(payload2)
-        #print("rewards2")
-        #print(rewards)
 
         # ensure only i=1 time and dev rewards are non-zero
         for i, r in enumerate(rewards):
@@ -1076,16 +1134,13 @@ class TestRewardController:
             "height": 101,
             "typ_values": utils.create_typ_values(gas_price)
             }
-        print(payload_params)
 
         _, current_height, current_ts = oracle.get(sid, cid, 107)
-        print(f"{current_height=}, {current_ts=}")
 
         b = utils.create_signed_payload(web3=web3, signer=owner, **payload_params)
 
         controller.update_many(b, sender=owner)
         rewards_after_b = controller.rewards(owner)
-        print(f"{rewards_after_b=}")
 
         # update #3, same gas, same time
         gas_price = int(10e9)
@@ -1123,16 +1178,13 @@ class TestRewardController:
             "height": 102,
             "typ_values": utils.create_typ_values(gas_price)
             }
-        print(payload_params)
 
         _, current_height, current_ts = oracle.get(sid, cid, 107)
-        print(f"{current_height=}, {current_ts=}")
 
         d = utils.create_signed_payload(web3=web3, signer=owner, **payload_params)
 
         controller.update_many(d, sender=owner)
         rewards_after_d = controller.rewards(owner)
-        print(f"{rewards_after_d=}")
 
         # update #5, large gas diff, large time diff
         gas_price = int(100e9)
@@ -1160,7 +1212,8 @@ class TestRewardController:
     def test_calc_deviation(self, owner, controller):
         controller.set_scale(2, 1, 3*10**15, sender=owner)
         scid = (1 << 8) | 2
-        # how many IQRs is 
+
+        # how many IQRs 
         assert controller.calc_deviation(scid, abs(10*10**15 - 1*10**15)) == 3*10**18
         assert controller.calc_deviation(scid, abs(1*10**15 - 10*10**15)) == 3*10**18
         assert controller.calc_deviation(scid, abs(1*10**15 - 4*10**15)) == 1*10**18
@@ -1171,7 +1224,6 @@ class TestRewardController:
         with pytest.raises(Exception):
             controller.set_scale(2, 1, 0, sender=owner)
             controller.calc_deviation(1, abs(10*10**15 - 1*10**15))
-
 
     def test_update_interval_ema(self, owner, controller):
         vals = [random.randint(600 * 10**18, 30000 * 10**18) for _ in range(100)]
@@ -1185,7 +1237,7 @@ class TestRewardController:
             emas.append(controller.interval_ema(1)/10**18)
 
 
-        # Uncomment to see comparative plot
+        # Uncomment to see comparative plot between: 10 period moving average and EMA
         """
         plt.plot(means, label='mean')
         plt.plot(emas, label='ema')
