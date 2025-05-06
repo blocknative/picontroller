@@ -27,8 +27,11 @@ event OracleUpdated:
     deviation_reward: uint256
     reward_mult: int256
 
-event RewardsStatus:
-    block_: address
+event RewardsToggled:
+    rewards_on: bool
+
+event RewardsFreeze:
+    rewards_frozen: bool
 
 struct Scale:
     system_id: uint8
@@ -135,6 +138,7 @@ def __init__(_kp: int80, _ki: int80, _co_bias: int80,
     self.min_window_size = _min_window_size
     self.oracle = IOracle(oracle)
     self.coeff = Coefficients(zero=_coeff[0], one=_coeff[1], two=_coeff[2], three=_coeff[3])
+    log RewardsToggled(rewards_on=False)
 
 @external
 def add_authority(account: address):
@@ -172,21 +176,25 @@ def set_scale(system_id: uint8, chain_id: uint64, scale: uint256):
 def freeze():
     assert self.authorities[msg.sender]
     self.frozen = True
+    log RewardsFreeze(rewards_frozen=True)
 
 @external
 def unfreeze():
     assert self.authorities[msg.sender]
     self.frozen = False
+    log RewardsFreeze(rewards_frozen=False)
 
 @external
 def enable_rewards():
     assert self.authorities[msg.sender]
     self.rewards_enabled = True
+    log RewardsToggled(rewards_on=True)
 
 @external
 def disable_rewards():
     assert self.authorities[msg.sender]
     self.rewards_enabled = False
+    log RewardsToggled(rewards_on=False)
 
 @external
 def modify_parameters_addr(parameter: String[32], addr: address):
