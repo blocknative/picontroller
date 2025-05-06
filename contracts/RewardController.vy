@@ -472,7 +472,6 @@ def update_many(dat: Bytes[MAX_PAYLOAD_SIZE]) -> DynArray[EnhancedReward, MAX_PA
                                           deviation_reward=0))
             continue
 
-
         new_gasprice = new_tip_val + new_bf_val
 
         scid = convert(shift(convert(rec.cid, uint256), 8) | convert(sid, uint256), uint72)
