@@ -846,6 +846,18 @@ class TestRewardController:
             payload += new_payload
 
         amount = 2000
+
+        # set min_fee < amount
+        tx = controller.modify_parameters_uint("min_fee", 2001, sender=owner)
+
+        # amount is less than min_fee
+        with pytest.raises(Exception):
+            tx = controller.update_many(payload, raise_on_revert=True, sender=owner, value=amount)
+
+        # set min_fee >= amount
+        tx = controller.modify_parameters_uint("min_fee", 2000, sender=owner)
+
+
         tx = controller.update_many(payload, raise_on_revert=True, sender=owner, value=amount)
         assert len(tx.events) == n
 

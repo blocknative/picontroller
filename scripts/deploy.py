@@ -21,6 +21,7 @@ def deploy(params, chain_id, owner, project):
             params.default_window_size,
             oracle_addresses[chain_id],
             params.coeff,
+            params.min_fee,
             publish=False,
             sender=owner)
 

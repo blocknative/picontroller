@@ -91,6 +91,7 @@ min_window_size: public(uint32)
 has_updated: public(HashMap[address, bool])
 updaters: address[MAX_UPDATERS]
 n_updaters:  public(uint32)
+min_fee: public(uint256)
 
 # if frozen, don't allow any updates
 frozen: public(bool)
@@ -117,7 +118,8 @@ def __init__(_kp: int80, _ki: int80, _co_bias: int80,
              _tip_reward_type: uint16,
              _min_reward: uint256, _max_reward: uint256,
              _min_window_size: uint32, oracle: address,
-             _coeff: int96[4]):
+             _coeff: int96[4],
+             _min_fee: uint256):
     #
     assert _output_upper_bound >= _output_lower_bound, "RewardController/invalid-bounds"
     assert oracle.is_contract, "Oracle address is not a contract"
@@ -138,6 +140,7 @@ def __init__(_kp: int80, _ki: int80, _co_bias: int80,
     self.min_window_size = _min_window_size
     self.oracle = IOracle(oracle)
     self.coeff = Coefficients(zero=_coeff[0], one=_coeff[1], two=_coeff[2], three=_coeff[3])
+    self.min_fee = _min_fee
     log RewardsToggled(rewards_on=False)
 
 @external
@@ -241,6 +244,8 @@ def modify_parameters_uint(parameter: String[32], val: uint256):
     elif (parameter == "max_reward"):
         assert val > self.min_reward, "RewardController/invalid-max_reward"
         self.max_reward = val
+    elif (parameter == "min_fee"):
+        self.min_fee = val
     else:
         raise "RewardController/modify-unrecognized-param"
 
@@ -396,6 +401,7 @@ def get_updaters_chunk(start: uint256, count: uint256) -> DynArray[TotalRewards,
 @payable
 def update_many(dat: Bytes[MAX_PAYLOAD_SIZE]) -> DynArray[EnhancedReward, MAX_PAYLOADS]:
     assert not self.frozen, "Rewards contract is frozen"
+    assert msg.value >= self.min_fee, "Paid fee is too low"
 
     receipts: DynArray[RecordReceipt, MAX_PAYLOADS] = extcall self.oracle.storeValuesWithReceipt(dat, value=msg.value)
     rewards: DynArray[EnhancedReward, MAX_PAYLOADS] = []

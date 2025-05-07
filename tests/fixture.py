@@ -43,6 +43,7 @@ def controller(owner, oracle, project, chain):
             params.default_window_size,
             oracle.address,
             params.coeff,
+            params.min_fee,
             sender=owner)
 
     set_scales(owner, controller, params)
