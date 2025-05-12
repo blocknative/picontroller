@@ -1257,4 +1257,202 @@ class TestRewardController:
         plt.show()
         """
 
+    def test_rewards_1(self, controller, oracle, owner):
+        controller.enable_rewards(sender=owner)
 
+        sid = 2
+        cid = 1
+        scid =  (cid << 8) | sid
+        ts = int(time.time() * 1000)
+        height = 100
+        scale = controller.scales(scid)
+
+
+        start_gp, _, _ = utils.get_current_gasprice(oracle, sid, cid)
+        assert start_gp == 0
+
+        ### update #1, max deviation, max time ###
+        gas_price = scale * params.max_deviation // 10**18
+        payload_1 = utils.create_final_payload(sid, cid, ts, height, gas_price, owner)
+
+        rewards_before_1 = controller.rewards(owner)
+        assert rewards_before_1 == 0
+
+        tx = controller.update_many(payload_1, sender=owner)
+        assert len(tx.events) == 1
+        e = tx.events[0]
+        print(e)
+
+        assert e.updater == owner
+        assert e.system_id == sid
+        assert e.chain_id == cid
+        assert e.new_value == gas_price
+        assert e.raw_deviation == gas_price
+        assert e.time_since == ts//1000
+        assert e.time_reward == controller.max_time_reward()
+        assert e.deviation_reward == controller.max_deviation_reward()
+        assert e.reward_mult == 10**18
+       
+
+        # check owners's total rewards
+        rewards_after_1 = controller.rewards(owner)
+
+        assert rewards_after_1 == controller.max_time_reward() + controller.max_deviation_reward()
+
+        # check system total rewards
+        assert controller.total_rewards() == rewards_after_1
+
+        current_bf, current_height, current_ts = oracle.get(sid, cid, 107)
+        current_tip, current_height, current_ts = oracle.get(sid, cid, 322)
+
+        print(f"{current_bf=}, {current_tip=}")
+
+        assert current_bf + current_tip == gas_price
+        current_gp, _, _ = utils.get_current_gasprice(oracle, sid, cid)
+        assert gas_price == current_gp
+
+
+        ### update #2, no deviation, min time ###
+        current_gp, _, _ = utils.get_current_gasprice(oracle, sid, cid)
+        assert current_gp == gas_price
+
+        new_gas_price = current_gp + scale * params.min_deviation // 10**18
+        #new_gas_price = current_gp + scale//100
+        new_gas_price = gas_price
+
+        payload_2 = utils.create_final_payload(sid, cid, current_ts+1000, current_height+1, new_gas_price, owner)
+
+        deviation_2 = controller.calc_deviation(scid, new_gas_price - gas_price)
+        assert deviation_2 == 0
+
+        tx = controller.update_many(payload_2, sender=owner)
+        assert len(tx.events) == 1
+        e = tx.events[0]
+        print(e)
+
+        assert e.updater == owner
+        assert e.system_id == sid
+        assert e.chain_id == cid
+        assert e.new_value == new_gas_price
+        assert e.raw_deviation == new_gas_price - current_gp
+        assert e.time_since == 1
+        assert e.time_reward == controller.min_time_reward()
+        assert e.deviation_reward == controller.min_deviation_reward()
+        assert e.reward_mult == 10**18
+
+
+        # check owners's total rewards
+        rewards_after_2 = controller.rewards(owner)
+
+        assert rewards_after_2 == rewards_after_1 + controller.min_time_reward() + controller.min_deviation_reward()
+
+        # check system total rewards
+        assert controller.total_rewards() == rewards_after_2
+
+
+        ### update #3, max deviation, min time ###
+        current_gp, current_height, current_ts = utils.get_current_gasprice(oracle, sid, cid)
+        assert current_gp == gas_price
+
+        new_gas_price = current_gp + scale * params.max_deviation // 10**18
+
+        payload_3 = utils.create_final_payload(sid, cid, current_ts+1000, current_height+1, new_gas_price, owner)
+
+        deviation_3 = controller.calc_deviation(scid, new_gas_price - current_gp)
+        assert deviation_3 ==  params.max_deviation
+
+        tx = controller.update_many(payload_3, sender=owner)
+        assert len(tx.events) == 1
+        e = tx.events[0]
+        print(e)
+
+        assert e.updater == owner
+        assert e.system_id == sid
+        assert e.chain_id == cid
+        assert e.new_value == new_gas_price
+        assert e.raw_deviation == new_gas_price - current_gp
+        assert e.time_since == 1
+        assert e.time_reward == controller.min_time_reward()
+        assert e.deviation_reward == controller.max_deviation_reward()
+        assert e.reward_mult == 10**18
+
+
+        # check owners's total rewards
+        rewards_after_3 = controller.rewards(owner)
+
+        assert rewards_after_3 == rewards_after_2 + controller.min_time_reward() + controller.max_deviation_reward()
+
+        # check system total rewards
+        assert controller.total_rewards() == rewards_after_3
+
+        ### update #4, no deviation, max time ###
+        current_gp, current_height, current_ts = utils.get_current_gasprice(oracle, sid, cid)
+        assert current_gp == new_gas_price
+
+        # Function is not a perfect fit, so add 1sec to get max time reward
+        max_ts_ms = (params.max_ts//10**18 + 1) * 1000
+
+        payload_4 = utils.create_final_payload(sid, cid, current_ts+max_ts_ms, current_height+1, current_gp, owner)
+
+        deviation_4 = controller.calc_deviation(scid, new_gas_price - current_gp)
+        assert deviation_4 == 0
+
+        tx = controller.update_many(payload_4, sender=owner)
+        assert len(tx.events) == 1
+        e = tx.events[0]
+        print(e)
+
+        assert e.updater == owner
+        assert e.system_id == sid
+        assert e.chain_id == cid
+        assert e.new_value == current_gp
+        assert e.raw_deviation == 0
+        assert e.time_since == max_ts_ms//1000
+        assert e.time_reward == controller.max_time_reward()
+        assert e.deviation_reward == controller.min_deviation_reward()
+        assert e.reward_mult == 10**18
+
+        # check owners's total rewards
+        rewards_after_4 = controller.rewards(owner)
+
+        assert rewards_after_4 == rewards_after_3 + controller.max_time_reward() + controller.min_deviation_reward()
+
+        # check system total rewards
+        assert controller.total_rewards() == rewards_after_4
+
+
+        ### update #5, mid deviation, mid time ###
+        current_gp, current_height, current_ts = utils.get_current_gasprice(oracle, sid, cid)
+        assert current_gp == new_gas_price
+
+        # Function is not a perfect fit, so add 1sec to get max time reward
+        mid_ts_ms = (params.max_ts//2//10**18) * 1000
+        new_gas_price = current_gp + scale * params.max_deviation //2 // 10**18
+
+        payload_5 = utils.create_final_payload(sid, cid, current_ts+mid_ts_ms, current_height+1, new_gas_price, owner)
+
+        deviation_5 = controller.calc_deviation(scid, new_gas_price - current_gp)
+        assert (deviation_5 - int(1.5*10**18))//10**18 < 1e-9
+
+        tx = controller.update_many(payload_5, sender=owner)
+        assert len(tx.events) == 1
+        e = tx.events[0]
+        print(e)
+
+        assert e.updater == owner
+        assert e.system_id == sid
+        assert e.chain_id == cid
+        assert e.new_value == new_gas_price
+        assert e.raw_deviation == int(scale * 1.5)
+        assert e.time_since == mid_ts_ms//1000
+        assert e.time_reward == 1249741491889158867600
+        assert e.deviation_reward == 1376922349320598367510
+        assert e.reward_mult == 10**18
+
+        # check owners's total rewards
+        rewards_after_5 = controller.rewards(owner)
+
+        assert rewards_after_5 == rewards_after_4 + e.time_reward + e.deviation_reward
+
+        # check system total rewards
+        assert controller.total_rewards() == rewards_after_5

@@ -564,9 +564,9 @@ def _calc_time_reward(time_since: int256, coeff: Coefficients) -> int256:
 
 @external
 @view
-def calc_deviation_reward(time_since: int256) -> int256:
+def calc_deviation_reward(deviation: int256) -> int256:
     coeff: Coefficients = self.coeff
-    return self._calc_deviation_reward(time_since, coeff)
+    return self._calc_deviation_reward(deviation, coeff)
 
 @internal
 @view
