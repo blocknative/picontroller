@@ -128,7 +128,7 @@ contract Oracle {
 
 
 
-    function storeValuesWithReceipt(bytes memory dat) public returns (RecordReceipt[] memory reecipts) {
+    function storeValuesWithReceipt(bytes memory dat) public payable returns (RecordReceipt[] memory reecipts) {
         uint init;
         uint offset;
         assembly {
