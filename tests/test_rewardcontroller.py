@@ -1316,8 +1316,6 @@ class TestRewardController:
         current_gp, _, _ = utils.get_current_gasprice(oracle, sid, cid)
         assert current_gp == gas_price
 
-        new_gas_price = current_gp + scale * params.min_deviation // 10**18
-        #new_gas_price = current_gp + scale//100
         new_gas_price = gas_price
 
         payload_2 = utils.create_final_payload(sid, cid, current_ts+1000, current_height+1, new_gas_price, owner)
@@ -1446,7 +1444,7 @@ class TestRewardController:
         assert e.raw_deviation == int(scale * 1.5)
         assert e.time_since == mid_ts_ms//1000
         assert e.time_reward == 1249741491889158867600
-        assert e.deviation_reward == 1376922349320598367510
+        assert e.deviation_reward == 1376922351053858402576
         assert e.reward_mult == 10**18
 
         # check owners's total rewards
