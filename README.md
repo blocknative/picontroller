@@ -34,7 +34,7 @@ vyper:
 
 ## Tests
 
-`ape test tests/test_rewardcontroller.py`
+`ape test tests/test_rewardcontroller.py  --network ethereum:local:foundry`
 
 
 ## Scripts
