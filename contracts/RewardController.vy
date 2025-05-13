@@ -159,7 +159,6 @@ def set_scales(scales: DynArray[Scale, 64]):
     scid: uint72 = 0
     for s: Scale in scales:
         scid = convert(shift(convert(s.chain_id, uint256), 8) | convert(s.system_id, uint256), uint72)
-        assert s.scale != 0, "scale can't be zero"
         self.scales[scid] = s.scale
 
 @external
@@ -172,7 +171,6 @@ def get_scale(system_id: uint8, chain_id: uint64) -> uint256:
 def set_scale(system_id: uint8, chain_id: uint64, scale: uint256):
     assert self.authorities[msg.sender]
     scid: uint72 = convert(shift(convert(chain_id, uint256), 8) | convert(system_id, uint256), uint72)
-    assert scale != 0, "scale can't be zero"
     self.scales[scid] = scale
 
 @external
